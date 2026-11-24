@@ -1,11 +1,16 @@
 #include "global.h"
 #include "event_object_movement.h"
+#include "field_effect.h"
+#include "field_effect_helpers.h"
 #include "field_player_avatar.h"
 #include "fieldmap.h"
 #include "main.h"
 #include "remote_player.h"
+#include "remote_sio.h"
+#include "sprite.h"
 #include "constants/event_object_movement.h"
 #include "constants/event_objects.h"
+#include "constants/field_effects.h"
 #include "constants/maps.h"
 
 // How often the local position is announced as an absolute SYNC.
@@ -16,6 +21,8 @@
 // A STEP landing up to this far from the last known tile is made up by
 // walking one tile at a time; further than that it becomes a reposition.
 #define MEND_MAX                3
+// Queued events at which the remote speeds up to catch up.
+#define HURRY_THRESHOLD         4
 #define SPAWN_RETRY_FRAMES      60
 // Remote players are only created inside this window around the local player.
 #define VIEW_HALF_WIDTH         7
@@ -32,6 +39,8 @@ struct RemoteSlot
     u8 objectId;
     u8 known;           // we have heard from this player since they (re)joined
     u8 gender;
+    u8 avatarState;     // PLAYER_AVATAR_STATE_*, decides the sprite
+    u8 blobSpriteId;    // surf blob under a surfing player, MAX_SPRITES = none
     u8 mapGroup;        // map the player says they are on
     u8 mapNum;
     u8 forceResync;     // next positional event repositions instead of walking
@@ -51,20 +60,25 @@ struct LoopbackEntry
 };
 
 static EWRAM_DATA struct RemoteSlot sSlots[REMOTE_MAX_PLAYERS] = {0};
+// Ring indices are volatile: the serial interrupt writes the receive ring and
+// reads the transmit ring while the main loop does the opposite.
 static EWRAM_DATA struct RemoteEvent sRxRing[RING_LEN] = {0};
 static EWRAM_DATA struct RemoteEvent sTxRing[RING_LEN] = {0};
-static EWRAM_DATA u8 sRxHead = 0;
-static EWRAM_DATA u8 sRxTail = 0;
-static EWRAM_DATA u8 sTxHead = 0;
-static EWRAM_DATA u8 sTxTail = 0;
+static EWRAM_DATA vu8 sRxHead = 0;
+static EWRAM_DATA vu8 sRxTail = 0;
+static EWRAM_DATA vu8 sTxHead = 0;
+static EWRAM_DATA vu8 sTxTail = 0;
 static EWRAM_DATA u8 sTxSeq = 0;
 static EWRAM_DATA bool8 sInitialized = FALSE;
+// Set when a real event has arrived from the link; the loopback ghost stops.
+static EWRAM_DATA vu8 sRealPeerSeen = FALSE;
 
 // Local player tracking (transmit side).
 static EWRAM_DATA bool8 sHavePlayerPos = FALSE;
 static EWRAM_DATA s16 sLastPlayerX = 0;
 static EWRAM_DATA s16 sLastPlayerY = 0;
 static EWRAM_DATA u8 sLastPlayerDir = 0;
+static EWRAM_DATA u8 sLastAvatarState = 0;
 static EWRAM_DATA u8 sLastMapGroup = 0;
 static EWRAM_DATA u8 sLastMapNum = 0;
 static EWRAM_DATA u16 sFramesSinceSync = 0;
@@ -76,43 +90,76 @@ static EWRAM_DATA u8 sLoopTail = 0;
 static EWRAM_DATA u16 sFrameCounter = 0;
 #endif
 
-// Movement action families, each ordered DOWN, UP, LEFT, RIGHT, which is the
-// same order as DIR_SOUTH, DIR_NORTH, DIR_WEST, DIR_EAST.
-static const u8 sWalkFamilyBases[] =
+// Animations in each avatar state's sprite table, indexed by
+// PLAYER_AVATAR_STATE_*. An action is only used when its animation exists:
+// running and surf jumps need 24, the acro bike 40.
+static const u8 sAnimCount[] =
 {
-    MOVEMENT_ACTION_WALK_SLOW_DOWN,
-    MOVEMENT_ACTION_WALK_NORMAL_DOWN,
-    MOVEMENT_ACTION_WALK_FAST_DOWN,
-    MOVEMENT_ACTION_WALK_FASTER_DOWN,
-    MOVEMENT_ACTION_PLAYER_RUN_DOWN,
+    [PLAYER_AVATAR_STATE_NORMAL]     = 24,
+    [PLAYER_AVATAR_STATE_MACH_BIKE]  = 20,
+    [PLAYER_AVATAR_STATE_ACRO_BIKE]  = 40,
+    [PLAYER_AVATAR_STATE_SURFING]    = 24,
+    [PLAYER_AVATAR_STATE_UNDERWATER] = 20,
+    [PLAYER_AVATAR_STATE_FIELD_MOVE] = 1,
+    [PLAYER_AVATAR_STATE_FISHING]    = 12,
+    [PLAYER_AVATAR_STATE_WATERING]   = 20,
 };
 
-static u8 DirIndex(u8 dir)
+static bool8 IsValidRemoteAction(u8 act)
 {
-    return dir - DIR_SOUTH;
+    // Only actions a player produces: facing, walking, jumping one ledge,
+    // faster gaits and running, the surf jump, jumps, acro bike tricks.
+    // Excludes things such as SET_INVISIBLE or emotes.
+    return act <= 0x0F
+        || (act >= 0x15 && act <= 0x38)
+        || (act >= 0x3A && act <= 0x3D)
+        || (act >= 0x42 && act <= 0x4D)
+        || (act >= 0x64 && act <= 0x8B);
 }
 
 // The movement action to give a remote for a received action id, or 0xFF when
-// nothing sensible can be done. Only actions the plain walking sprite has
-// animations for are passed through; anything else becomes a normal walk.
-static u8 ActionFor(u8 dir, u8 action, bool8 isStep)
+// nothing sensible can be done. An action the sprite has no animation for
+// becomes a normal walk (or a turn); a bad animation index would read garbage.
+// Each family of actions is ordered DOWN, UP, LEFT, RIGHT, which is the same
+// order as DIR_SOUTH, DIR_NORTH, DIR_WEST, DIR_EAST.
+static u8 ActionFor(u8 avatarState, u8 dir, u8 action, bool8 isStep, bool8 hurry)
 {
+    u8 count;
     u8 d;
-    u8 i;
+    u8 base;
+    u8 act;
+    u8 need;
 
-    if (dir < DIR_SOUTH || dir > DIR_EAST)
+    if (avatarState >= ARRAY_COUNT(sAnimCount))
         return 0xFF;
-    d = DirIndex(dir);
+    count = sAnimCount[avatarState];
+    if (dir < DIR_SOUTH || dir > DIR_EAST || count < 20)
+        return 0xFF;
 
-    if (!isStep)
-        return MOVEMENT_ACTION_FACE_DOWN + d;
+    d = dir - DIR_SOUTH;
+    base = isStep ? MOVEMENT_ACTION_WALK_NORMAL_DOWN : MOVEMENT_ACTION_FACE_DOWN;
+    act = action;
+    need = 20;
 
-    for (i = 0; i < ARRAY_COUNT(sWalkFamilyBases); i++)
-    {
-        if (action >= sWalkFamilyBases[i] && action < sWalkFamilyBases[i] + 4)
-            return sWalkFamilyBases[i] + d;
-    }
-    return MOVEMENT_ACTION_WALK_NORMAL_DOWN + d;
+    if (!IsValidRemoteAction(act))
+        act = base + d;
+
+    if (act >= 0x64)
+        need = 40;
+    else if (act >= 0x35 && act <= 0x3D)
+        need = 24;
+    if (count < need)
+        act = base + d;
+
+    // When events pile up the remote moves faster than the gait it was told
+    // to use, until it has caught up. Only plain gaits: a hurried jump would
+    // no longer be a jump.
+    if (hurry && ((u8)(act - MOVEMENT_ACTION_WALK_NORMAL_DOWN) < 4
+               || (u8)(act - MOVEMENT_ACTION_WALK_FAST_DOWN) < 4
+               || (u8)(act - MOVEMENT_ACTION_PLAYER_RUN_DOWN) < 4))
+        act = MOVEMENT_ACTION_WALK_FASTER_DOWN + d;
+
+    return act;
 }
 
 static void RingPushTx(struct RemoteEvent *event)
@@ -134,6 +181,7 @@ bool8 RemotePlayer_PopTx(struct RemoteEvent *event)
     return TRUE;
 }
 
+// Called from the serial interrupt.
 bool8 RemotePlayer_PushRx(const struct RemoteEvent *event)
 {
     u8 next = (sRxHead + 1) % RING_LEN;
@@ -142,6 +190,7 @@ bool8 RemotePlayer_PushRx(const struct RemoteEvent *event)
         return FALSE;
     sRxRing[sRxHead] = *event;
     sRxHead = next;
+    sRealPeerSeen = TRUE;
     return TRUE;
 }
 
@@ -153,6 +202,8 @@ void RemotePlayer_Init(void)
     {
         sSlots[i].spawned = FALSE;
         sSlots[i].objectId = OBJECT_EVENTS_COUNT;
+        sSlots[i].blobSpriteId = MAX_SPRITES;
+        sSlots[i].avatarState = PLAYER_AVATAR_STATE_NORMAL;
         sSlots[i].known = FALSE;
         sSlots[i].forceResync = TRUE;
         sSlots[i].spawnCooldown = 0;
@@ -172,6 +223,23 @@ void RemotePlayer_Init(void)
 // Transmit side: describe what the local player does
 // ---------------------------------------------------------------------------
 
+// What the local player is, which decides the sprite others draw for them.
+// Running is still the normal state: it is another animation of the same sprite.
+static u8 LocalAvatarState(void)
+{
+    u8 flags = gPlayerAvatar.flags;
+
+    if (flags & PLAYER_AVATAR_FLAG_UNDERWATER)
+        return PLAYER_AVATAR_STATE_UNDERWATER;
+    if (flags & PLAYER_AVATAR_FLAG_SURFING)
+        return PLAYER_AVATAR_STATE_SURFING;
+    if (flags & PLAYER_AVATAR_FLAG_ACRO_BIKE)
+        return PLAYER_AVATAR_STATE_ACRO_BIKE;
+    if (flags & PLAYER_AVATAR_FLAG_MACH_BIKE)
+        return PLAYER_AVATAR_STATE_MACH_BIKE;
+    return PLAYER_AVATAR_STATE_NORMAL;
+}
+
 static void EmitEvent(u8 kind, struct ObjectEvent *player, u8 dir, u8 action)
 {
     struct RemoteEvent event;
@@ -185,10 +253,11 @@ static void EmitEvent(u8 kind, struct ObjectEvent *player, u8 dir, u8 action)
     event.x = player->currentCoords.x;
     event.y = player->currentCoords.y;
     event.gender = gSaveBlock2Ptr->playerGender;
-    event.avatarState = PLAYER_AVATAR_STATE_NORMAL;
+    event.avatarState = LocalAvatarState();
     RingPushTx(&event);
 
 #if REMOTE_PLAYER_LOOPBACK
+    if (!sRealPeerSeen)
     {
         u8 next = (sLoopHead + 1) % LOOPBACK_RING_LEN;
 
@@ -208,6 +277,7 @@ static void TrackPlayer(void)
     s16 x = player->currentCoords.x;
     s16 y = player->currentCoords.y;
     u8 dir = player->facingDirection;
+    u8 state = LocalAvatarState();
     u8 mapGroup = gSaveBlock1Ptr->location.mapGroup;
     u8 mapNum = gSaveBlock1Ptr->location.mapNum;
 
@@ -221,6 +291,7 @@ static void TrackPlayer(void)
         sLastPlayerX = x;
         sLastPlayerY = y;
         sLastPlayerDir = dir;
+        sLastAvatarState = state;
         sFramesSinceSync = 0;
         EmitEvent(REMOTE_EVENT_SYNC, player, dir, player->movementActionId);
         return;
@@ -230,13 +301,16 @@ static void TrackPlayer(void)
     {
         EmitEvent(REMOTE_EVENT_STEP, player, dir, player->movementActionId);
     }
-    else if (dir != sLastPlayerDir)
+    else if (dir != sLastPlayerDir || state != sLastAvatarState)
     {
+        // Turning on the spot moves no coordinates, and mounting a bike or
+        // diving changes the sprite without a step: say so explicitly.
         EmitEvent(REMOTE_EVENT_TURN, player, dir, player->movementActionId);
     }
     sLastPlayerX = x;
     sLastPlayerY = y;
     sLastPlayerDir = dir;
+    sLastAvatarState = state;
 
     if (++sFramesSinceSync >= SYNC_PERIOD_FRAMES)
     {
@@ -248,6 +322,70 @@ static void TrackPlayer(void)
 // ---------------------------------------------------------------------------
 // Receive side: make the remote objects move as their players do
 // ---------------------------------------------------------------------------
+
+static bool8 BlobIsMine(u8 slotId)
+{
+    struct RemoteSlot *slot = &sSlots[slotId];
+    struct Sprite *sprite;
+
+    if (slot->blobSpriteId >= MAX_SPRITES)
+        return FALSE;
+    sprite = &gSprites[slot->blobSpriteId];
+    // The id alone proves nothing: sprites are recycled.
+    return sprite->inUse
+        && sprite->callback == UpdateSurfBlobFieldEffect
+        && sprite->data[2] == slot->objectId;
+}
+
+static void DestroyBlob(u8 slotId)
+{
+    struct RemoteSlot *slot = &sSlots[slotId];
+
+    if (BlobIsMine(slotId))
+    {
+        DestroySprite(&gSprites[slot->blobSpriteId]);
+        // The bobbing wrote an offset into the rider's sprite every frame;
+        // with the blob gone nothing would take it back out.
+        if (slot->objectId < OBJECT_EVENTS_COUNT && gObjectEvents[slot->objectId].spriteId < MAX_SPRITES)
+        {
+            struct Sprite *rider = &gSprites[gObjectEvents[slot->objectId].spriteId];
+
+            rider->x2 = 0;
+            rider->y2 = 0;
+        }
+    }
+    slot->blobSpriteId = MAX_SPRITES;
+}
+
+static void CreateBlob(u8 slotId)
+{
+    struct RemoteSlot *slot = &sSlots[slotId];
+    struct ObjectEvent *object = &gObjectEvents[slot->objectId];
+    s32 saved[3];
+    u32 spriteId;
+
+    if (BlobIsMine(slotId))
+        return;
+
+    // The field effect takes its parameters from a shared array the game also
+    // uses to pass parameters between its own steps; leave it as found.
+    saved[0] = gFieldEffectArguments[0];
+    saved[1] = gFieldEffectArguments[1];
+    saved[2] = gFieldEffectArguments[2];
+    gFieldEffectArguments[0] = object->currentCoords.x;
+    gFieldEffectArguments[1] = object->currentCoords.y;
+    gFieldEffectArguments[2] = slot->objectId;
+    spriteId = FieldEffectStart(FLDEFF_SURF_BLOB);
+    gFieldEffectArguments[0] = saved[0];
+    gFieldEffectArguments[1] = saved[1];
+    gFieldEffectArguments[2] = saved[2];
+
+    if (spriteId >= MAX_SPRITES)
+        return;
+    object->fieldEffectSpriteId = spriteId;
+    slot->blobSpriteId = spriteId;
+    SetSurfBlob_BobState(spriteId, BOB_PLAYER_AND_MON);
+}
 
 static bool8 SlotIsAlive(u8 slotId)
 {
@@ -265,6 +403,7 @@ static bool8 SlotIsAlive(u8 slotId)
     // The game may have removed or recycled the object (leaving view, warping).
     if (!object->active || object->localId != REMOTE_LOCAL_ID + slotId)
     {
+        DestroyBlob(slotId);
         slot->spawned = FALSE;
         return FALSE;
     }
@@ -276,7 +415,10 @@ static void DespawnSlot(u8 slotId)
     struct RemoteSlot *slot = &sSlots[slotId];
 
     if (SlotIsAlive(slotId))
+    {
+        DestroyBlob(slotId);
         RemoveRemotePlayerObjectEvent(slot->objectId);
+    }
     slot->spawned = FALSE;
     slot->objectId = OBJECT_EVENTS_COUNT;
 }
@@ -308,7 +450,7 @@ static void TrySpawn(u8 slotId, s16 x, s16 y, u8 dir)
     if (!player->active || !InsideView(x, y))
         return;
 
-    gfx = GetRivalAvatarGraphicsIdByStateIdAndGender(PLAYER_AVATAR_STATE_NORMAL, slot->gender);
+    gfx = GetRivalAvatarGraphicsIdByStateIdAndGender(slot->avatarState, slot->gender);
     id = SpawnSpecialObjectEventParameterized(gfx, MOVEMENT_TYPE_NONE, REMOTE_LOCAL_ID + slotId,
                                               x, y, player->currentElevation);
     if (id >= OBJECT_EVENTS_COUNT)
@@ -328,6 +470,51 @@ static void TrySpawn(u8 slotId, s16 x, s16 y, u8 dir)
     slot->spawned = TRUE;
     // Spawning is already an absolute placement.
     slot->forceResync = FALSE;
+}
+
+// Makes the sprite match the player's avatar state and gender. The sprites
+// are not all the same size (256 bytes on foot, 512 on a bike or surfing), and
+// changing graphics does not reallocate tiles, so a size change recreates the
+// object instead.
+static void SyncGraphics(u8 slotId)
+{
+    struct RemoteSlot *slot = &sSlots[slotId];
+    struct ObjectEvent *object = &gObjectEvents[slot->objectId];
+    u8 want = GetRivalAvatarGraphicsIdByStateIdAndGender(slot->avatarState, slot->gender);
+    u8 have = object->graphicsId;
+
+    if (want == have)
+        return;
+
+    if (GetObjectEventGraphicsInfo(want)->size != GetObjectEventGraphicsInfo(have)->size)
+    {
+        s16 x = object->currentCoords.x;
+        s16 y = object->currentCoords.y;
+        u8 dir = object->facingDirection;
+
+        DespawnSlot(slotId);
+        // Same frame, no cooldown: the tile is already on screen.
+        slot->spawnCooldown = 0;
+        TrySpawn(slotId, x, y, dir);
+        return;
+    }
+
+    // A running action in progress would keep pushing the animation index out
+    // of range for its whole duration.
+    ObjectEventClearHeldMovementIfActive(object);
+    ObjectEventSetGraphicsId(object, want);
+    if (sAnimCount[slot->avatarState] >= 20)
+        ObjectEventTurn(object, object->movementDirection);
+    else
+        StartSpriteAnim(&gSprites[object->spriteId], 0);
+}
+
+static void SyncBlob(u8 slotId)
+{
+    if (sSlots[slotId].avatarState == PLAYER_AVATAR_STATE_SURFING)
+        CreateBlob(slotId);
+    else
+        DestroyBlob(slotId);
 }
 
 static bool8 ReadyForMovement(struct ObjectEvent *object)
@@ -357,6 +544,25 @@ static s16 Abs16(s16 v)
     return v < 0 ? -v : v;
 }
 
+static u8 QueueLength(struct RemoteSlot *slot)
+{
+    return (slot->qHead + SLOT_QUEUE_LEN - slot->qTail) % SLOT_QUEUE_LEN;
+}
+
+// Gives the remote a movement action. The acro bike's side jump moves the
+// player without turning them; the sender's event says which way they look
+// and the action which way they go, so when the two differ the facing is
+// locked for the action's duration, as it is on the sender.
+static void StartMovement(struct ObjectEvent *object, u8 dir, u8 act, bool8 isStep)
+{
+    u8 family = act;
+
+    if (act >= 0x10 && act < 0x64)
+        family = act - (act <= 0x38 ? 1 : 2);
+    object->facingDirectionLocked = isStep && (family & 3) != (u8)(dir - DIR_SOUTH);
+    ObjectEventSetHeldMovement(object, act);
+}
+
 // Handles queued events for one slot. Returns when the remote is still busy
 // with a previous movement; that event stays queued.
 static void ConsumeSlotEvents(u8 slotId)
@@ -378,6 +584,7 @@ static void ConsumeSlotEvents(u8 slotId)
 
         slot->known = TRUE;
         slot->gender = event->gender;
+        slot->avatarState = event->avatarState < ARRAY_COUNT(sAnimCount) ? event->avatarState : PLAYER_AVATAR_STATE_NORMAL;
 
         if (!sameMap)
         {
@@ -395,7 +602,8 @@ static void ConsumeSlotEvents(u8 slotId)
 
         if (!alive)
         {
-            // Nothing on screen: any positional event places them directly.
+            // Nothing on screen: any positional event places them directly,
+            // and is consumed by doing so.
             if (slot->spawnCooldown == 0)
                 TrySpawn(slotId, x, y, event->dir);
             slot->mapGroup = event->mapGroup;
@@ -409,13 +617,24 @@ static void ConsumeSlotEvents(u8 slotId)
         }
 
         {
-            struct ObjectEvent *object = &gObjectEvents[slot->objectId];
+            struct ObjectEvent *object;
+
+            // The sprite follows the avatar state (bike, surf, dive).
+            SyncGraphics(slotId);
+            if (!SlotIsAlive(slotId))
+            {
+                slot->qTail = next;
+                continue;
+            }
+            object = &gObjectEvents[slot->objectId];
+            SyncBlob(slotId);
 
             if (kind == REMOTE_EVENT_STEP && !slot->forceResync)
             {
                 s16 gapX = x - slot->targetX;
                 s16 gapY = y - slot->targetY;
                 s16 gap = Abs16(gapX) + Abs16(gapY);
+                bool8 hurry = QueueLength(slot) >= HURRY_THRESHOLD;
 
                 if (!ReadyForMovement(object))
                     return;
@@ -425,6 +644,7 @@ static void ConsumeSlotEvents(u8 slotId)
                     // Lost steps in a straight line: walk one tile and look
                     // at the same event again.
                     u8 mendDir;
+                    u8 mendAct;
 
                     if (gapX != 0)
                     {
@@ -436,7 +656,9 @@ static void ConsumeSlotEvents(u8 slotId)
                         mendDir = gapY > 0 ? DIR_SOUTH : DIR_NORTH;
                         slot->targetY += gapY > 0 ? 1 : -1;
                     }
-                    ObjectEventSetHeldMovement(object, ActionFor(mendDir, MOVEMENT_ACTION_WALK_FASTER_DOWN, TRUE));
+                    mendAct = ActionFor(slot->avatarState, mendDir, MOVEMENT_ACTION_WALK_FASTER_DOWN, TRUE, TRUE);
+                    if (mendAct != 0xFF)
+                        StartMovement(object, mendDir, mendAct, TRUE);
                     return;
                 }
                 if (gap > MEND_MAX)
@@ -445,10 +667,10 @@ static void ConsumeSlotEvents(u8 slotId)
                 }
                 else
                 {
-                    u8 act = ActionFor(event->dir, event->action, TRUE);
+                    u8 act = ActionFor(slot->avatarState, event->dir, event->action, TRUE, hurry);
 
                     if (act != 0xFF)
-                        ObjectEventSetHeldMovement(object, act);
+                        StartMovement(object, event->dir, act, TRUE);
                     slot->targetX = x;
                     slot->targetY = y;
                     slot->qTail = next;
@@ -462,12 +684,12 @@ static void ConsumeSlotEvents(u8 slotId)
 
             if (kind == REMOTE_EVENT_TURN)
             {
-                u8 act = ActionFor(event->dir, event->action, FALSE);
+                u8 act = ActionFor(slot->avatarState, event->dir, event->action, FALSE, FALSE);
 
                 if (!ReadyForMovement(object))
                     return;
                 if (act != 0xFF)
-                    ObjectEventSetHeldMovement(object, act);
+                    StartMovement(object, event->dir, act, FALSE);
                 slot->qTail = next;
                 continue;
             }
@@ -553,8 +775,9 @@ static void DrainLoopback(void)
             break;
         event = sLoopback[sLoopTail].event;
         event.type &= 0x0F;     // slot 0
-        if (!RemotePlayer_PushRx(&event))
-            break;
+        // Queued directly, not through the receive ring: that ring belongs
+        // to the serial interrupt.
+        QueueEvent(&event);
         sLoopTail = (sLoopTail + 1) % LOOPBACK_RING_LEN;
     }
 }
@@ -576,9 +799,12 @@ void RemotePlayer_Tick(void)
     if (!gObjectEvents[gPlayerAvatar.objectEventId].active)
         return;
 
+    RemoteSio_Tick();
+
 #if REMOTE_PLAYER_LOOPBACK
     sFrameCounter++;
-    DrainLoopback();
+    if (!sRealPeerSeen)
+        DrainLoopback();
 #endif
 
     TrackPlayer();

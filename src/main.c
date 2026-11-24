@@ -23,6 +23,7 @@
 #include "intro.h"
 #include "main.h"
 #include "trainer_hill.h"
+#include "remote_sio.h"
 #include "constants/rgb.h"
 
 static void VBlankIntr(void);
@@ -345,6 +346,7 @@ static void VBlankIntr(void)
         LinkVSync();
 
     gMain.vblankCounter1++;
+    RemoteSio_VBlank();
 
     if (gTrainerHillVBlankCounter && *gTrainerHillVBlankCounter < 0xFFFFFFFF)
         (*gTrainerHillVBlankCounter)++;
@@ -399,6 +401,8 @@ static void SerialIntr(void)
 {
     if (gMain.serialCallback)
         gMain.serialCallback();
+    else
+        RemoteSio_OnSerialIrq();
 
     INTR_CHECK |= INTR_FLAG_SERIAL;
     gMain.intrCheck |= INTR_FLAG_SERIAL;

@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_sio.h"
 #include "m4a.h"
 #include "malloc.h"
 #include "reload_save.h"
@@ -368,6 +369,8 @@ void OpenLink(void)
 {
     int i;
 
+    RemoteSio_GameLinkOpened();
+
     if (!gWirelessCommType)
     {
         ResetSerial();
@@ -404,6 +407,7 @@ void CloseLink(void)
         LinkRfu_Shutdown();
     sLinkOpen = FALSE;
     DisableSerial();
+    RemoteSio_GameLinkClosed();
 }
 
 static void TestBlockTransfer(u8 nothing, u8 is, u8 used)

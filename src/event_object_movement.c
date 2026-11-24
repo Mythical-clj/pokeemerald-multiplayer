@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_player.h"
 #include "malloc.h"
 #include "battle_pyramid.h"
 #include "berry.h"
@@ -4912,7 +4913,8 @@ u8 ObjectEventGetHeldMovementActionId(struct ObjectEvent *objectEvent)
 
 void UpdateObjectEventCurrentMovement(struct ObjectEvent *objectEvent, struct Sprite *sprite, bool8 (*callback)(struct ObjectEvent *, struct Sprite *))
 {
-    DoGroundEffects_OnSpawn(objectEvent, sprite);
+    if (!IS_REMOTE_LOCAL_ID(objectEvent->localId))
+        DoGroundEffects_OnSpawn(objectEvent, sprite);
     TryEnableObjectEventAnim(objectEvent, sprite);
 
     if (ObjectEventIsHeldMovementActive(objectEvent))
@@ -4920,8 +4922,11 @@ void UpdateObjectEventCurrentMovement(struct ObjectEvent *objectEvent, struct Sp
     else if (!objectEvent->frozen)
         while (callback(objectEvent, sprite));
 
-    DoGroundEffects_OnBeginStep(objectEvent, sprite);
-    DoGroundEffects_OnFinishStep(objectEvent, sprite);
+    if (!IS_REMOTE_LOCAL_ID(objectEvent->localId))
+    {
+        DoGroundEffects_OnBeginStep(objectEvent, sprite);
+        DoGroundEffects_OnFinishStep(objectEvent, sprite);
+    }
     UpdateObjectEventSpriteAnimPause(objectEvent, sprite);
     UpdateObjectEventVisibility(objectEvent, sprite);
     ObjectEventUpdateSubpriority(objectEvent, sprite);
