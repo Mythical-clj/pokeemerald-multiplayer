@@ -8,6 +8,7 @@
 #include "pokemon.h"
 #include "pokemon_storage_system.h"
 #include "random.h"
+#include "remote_player.h"
 #include "save_location.h"
 #include "trainer_hill.h"
 #include "gba/flash_internal.h"
@@ -182,7 +183,13 @@ void SaveObjectEvents(void)
     int i;
 
     for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
-        gSaveBlock1Ptr->objectEvents[i] = gObjectEvents[i];
+    {
+        // Remote players must never end up in the save file.
+        if (gObjectEvents[i].active && IS_REMOTE_LOCAL_ID(gObjectEvents[i].localId))
+            ClearRemotePlayerSaveEntry(&gSaveBlock1Ptr->objectEvents[i]);
+        else
+            gSaveBlock1Ptr->objectEvents[i] = gObjectEvents[i];
+    }
 }
 
 void LoadObjectEvents(void)

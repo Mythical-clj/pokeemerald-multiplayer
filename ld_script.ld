@@ -111,6 +111,7 @@ SECTIONS {
         src/play_time.o(.text);
         src/new_game.o(.text);
         src/overworld.o(.text);
+        src/remote_player.o(.text);
         src/fieldmap.o(.text);
         src/metatile_behavior.o(.text);
         src/field_camera.o(.text);
@@ -497,6 +498,7 @@ SECTIONS {
         src/berry_blender.o(.rodata);
         src/new_game.o(.rodata);
         src/overworld.o(.rodata);
+        src/remote_player.o(.rodata);
         src/tilesets.o(.rodata);
         data/maps.o(.rodata);
         src/fieldmap.o(.rodata);

@@ -40,6 +40,7 @@
 #include "palette.h"
 #include "play_time.h"
 #include "random.h"
+#include "remote_player.h"
 #include "roamer.h"
 #include "rotating_gate.h"
 #include "safari_zone.h"
@@ -1459,7 +1460,10 @@ static void DoCB1_Overworld(u16 newKeys, u16 heldKeys)
 void CB1_Overworld(void)
 {
     if (gMain.callback2 == CB2_Overworld)
+    {
         DoCB1_Overworld(gMain.newKeys, gMain.heldKeys);
+        RemotePlayer_Tick();
+    }
 }
 
 static void OverworldBasic(void)

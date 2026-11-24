@@ -1396,6 +1396,12 @@ void RemoveObjectEventByLocalIdAndMap(u8 localId, u8 mapNum, u8 mapGroup)
     }
 }
 
+// Remote players have no map template and therefore no flag to set.
+void RemoveRemotePlayerObjectEvent(u8 objectEventId)
+{
+    RemoveObjectEvent(&gObjectEvents[objectEventId]);
+}
+
 static void RemoveObjectEventInternal(struct ObjectEvent *objectEvent)
 {
     struct SpriteFrameImage image;
