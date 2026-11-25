@@ -1302,7 +1302,8 @@ static void PlayerPartnerHandleDrawTrainerPic(void)
     if (gPartnerTrainerId == TRAINER_STEVEN_PARTNER)
     {
         trainerPicId = RemoteBattle_GetPartnerBackPic();
-        xPos = 90;
+        // The left battler stands left, the right one right.
+        xPos = (GetBattlerPosition(gActiveBattler) & BIT_FLANK) != B_FLANK_LEFT ? 90 : 32;
         yPos = (8 - gTrainerBackPicCoords[trainerPicId].size) * 4 + 80;
     }
     else
@@ -1500,8 +1501,56 @@ static void PlayerPartnerHandlePrintSelectionString(void)
     PlayerPartnerBufferExecCompleted();
 }
 
+// With a human partner the choice comes from their game: wait for it, then
+// hand it to the engine exactly as their menu did.
+static void PlayerPartnerWaitForRemote(void)
+{
+    struct RemoteChoice choice;
+
+    if (RemoteBattle_PopChoice(&choice))
+    {
+        u8 order[3];
+
+        switch (choice.kind)
+        {
+        case 1:
+            BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, choice.a, choice.b | (choice.c << 8));
+            break;
+        case 2:
+            order[0] = choice.b;
+            order[1] = choice.c;
+            order[2] = choice.d;
+            if (choice.a < PARTY_SIZE)
+                *(gBattleStruct->monToSwitchIntoId + gActiveBattler) = choice.a;
+            BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, choice.a, order);
+            break;
+        default:
+            BtlController_EmitOneReturnValue(B_COMM_TO_ENGINE, choice.a | (choice.b << 8));
+            break;
+        }
+        PlayerPartnerBufferExecCompleted();
+    }
+    else if (RemoteBattle_WaitTimedOut())
+    {
+        // Contact lost: from here on the game plays this battler. The
+        // command is still in the buffer, so it simply runs again.
+        RemoteBattle_GiveUpOnRemote();
+        gBattlerControllerFuncs[gActiveBattler] = PlayerPartnerBufferRunCommand;
+    }
+}
+
+static bool8 WaitForRemoteChoice(void)
+{
+    if (!RemoteBattle_ControlsBattler(gActiveBattler))
+        return FALSE;
+    gBattlerControllerFuncs[gActiveBattler] = PlayerPartnerWaitForRemote;
+    return TRUE;
+}
+
 static void PlayerPartnerHandleChooseAction(void)
 {
+    if (WaitForRemoteChoice())
+        return;
     AI_TrySwitchOrUseItem();
     PlayerPartnerBufferExecCompleted();
 }
@@ -1516,6 +1565,8 @@ static void PlayerPartnerHandleChooseMove(void)
     u8 chosenMoveId;
     struct ChooseMoveStruct *moveInfo = (struct ChooseMoveStruct *)(&gBattleBufferA[gActiveBattler][4]);
 
+    if (WaitForRemoteChoice())
+        return;
     BattleAI_SetupAIData(ALL_MOVES_MASK);
     chosenMoveId = BattleAI_ChooseMoveOrAction();
 
@@ -1539,7 +1590,11 @@ static void PlayerPartnerHandleChooseItem(void)
 
 static void PlayerPartnerHandleChoosePokemon(void)
 {
-    s32 chosenMonId = GetMostSuitableMonToSwitchInto();
+    s32 chosenMonId;
+
+    if (WaitForRemoteChoice())
+        return;
+    chosenMonId = GetMostSuitableMonToSwitchInto();
 
     if (chosenMonId == PARTY_SIZE) // just switch to the next mon
     {

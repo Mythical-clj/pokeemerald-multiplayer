@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"
 #include "battle_anim.h"
@@ -133,13 +134,21 @@ static void InitSinglePlayerBtlControllers(void)
         }
         else
         {
-            gBattlerControllerFuncs[B_BATTLER_0] = SetControllerToPlayer;
+            // As the guest of a human partner battle, the left battler is the host
+            // (played from the host's menu) and the right one is this player.
+            if (RemoteBattle_IsGuest())
+                gBattlerControllerFuncs[B_BATTLER_0] = SetControllerToPlayerPartner;
+            else
+                gBattlerControllerFuncs[B_BATTLER_0] = SetControllerToPlayer;
             gBattlerPositions[B_BATTLER_0] = B_POSITION_PLAYER_LEFT;
 
             gBattlerControllerFuncs[B_BATTLER_1] = SetControllerToOpponent;
             gBattlerPositions[B_BATTLER_1] = B_POSITION_OPPONENT_LEFT;
 
-            gBattlerControllerFuncs[B_BATTLER_2] = SetControllerToPlayerPartner;
+            if (RemoteBattle_IsGuest())
+                gBattlerControllerFuncs[B_BATTLER_2] = SetControllerToPlayer;
+            else
+                gBattlerControllerFuncs[B_BATTLER_2] = SetControllerToPlayerPartner;
             gBattlerPositions[B_BATTLER_2] = B_POSITION_PLAYER_RIGHT;
 
             gBattlerControllerFuncs[B_BATTLER_3] = SetControllerToOpponent;
@@ -1370,6 +1379,8 @@ static void UNUSED BtlController_EmitCmd32(u8 bufferId, u16 size, void *data)
 
 void BtlController_EmitTwoReturnValues(u8 bufferId, u8 ret8, u16 ret16)
 {
+    if (bufferId == B_COMM_TO_ENGINE)
+        RemoteBattle_CaptureTwoReturn(gActiveBattler, ret8, ret16);
     sBattleBuffersTransferData[0] = CONTROLLER_TWORETURNVALUES;
     sBattleBuffersTransferData[1] = ret8;
     sBattleBuffersTransferData[2] = ret16;
@@ -1381,6 +1392,8 @@ void BtlController_EmitChosenMonReturnValue(u8 bufferId, u8 partyId, u8 *battleP
 {
     s32 i;
 
+    if (bufferId == B_COMM_TO_ENGINE)
+        RemoteBattle_CaptureChosenMon(gActiveBattler, partyId, battlePartyOrder);
     sBattleBuffersTransferData[0] = CONTROLLER_CHOSENMONRETURNVALUE;
     sBattleBuffersTransferData[1] = partyId;
     for (i = 0; i < (int)ARRAY_COUNT(gBattlePartyCurrentOrder); i++)
@@ -1390,6 +1403,8 @@ void BtlController_EmitChosenMonReturnValue(u8 bufferId, u8 partyId, u8 *battleP
 
 void BtlController_EmitOneReturnValue(u8 bufferId, u16 ret)
 {
+    if (bufferId == B_COMM_TO_ENGINE)
+        RemoteBattle_CaptureOne(gActiveBattler, ret);
     sBattleBuffersTransferData[0] = CONTROLLER_ONERETURNVALUE;
     sBattleBuffersTransferData[1] = ret;
     sBattleBuffersTransferData[2] = (ret & 0xFF00) >> 8;

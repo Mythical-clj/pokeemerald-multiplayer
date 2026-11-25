@@ -465,6 +465,25 @@ static void DoTrainerBattle(void)
     TryUpdateGymLeaderRematchFromTrainer();
 }
 
+// A partner who is a person is asked to join first; the battle starts as soon
+// as their game answers, or without them when it does not.
+static void Task_WaitForPartnerThenBattle(u8 taskId)
+{
+    if (!RemoteBattle_AwaitingStartAck())
+    {
+        DestroyTask(taskId);
+        DoTrainerBattle();
+    }
+}
+
+// The guest's side of a battle the host started.
+void BattleSetup_StartRemoteGuestBattle(void)
+{
+    CreateBattleStartTask(GetTrainerBattleTransition(), 0);
+    IncrementGameStat(GAME_STAT_TOTAL_BATTLES);
+    IncrementGameStat(GAME_STAT_TRAINER_BATTLES);
+}
+
 static void DoBattlePyramidTrainerHillBattle(void)
 {
     if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
@@ -1331,7 +1350,10 @@ void BattleSetup_StartTrainerBattle(void)
     else
     {
         RemoteBattle_PrepareTrainerBattle();
-        DoTrainerBattle();
+        if (RemoteBattle_AwaitingStartAck())
+            CreateTask(Task_WaitForPartnerThenBattle, 1);
+        else
+            DoTrainerBattle();
     }
 
     ScriptContext_Stop();

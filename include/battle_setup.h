@@ -40,6 +40,7 @@ bool32 GetTrainerFlagFromScriptPointer(const u8 *data);
 void SetTrainerFacingDirection(void);
 u8 GetTrainerBattleMode(void);
 void BattleSetup_CopyTrainerAToB(void);
+void BattleSetup_StartRemoteGuestBattle(void);
 bool8 GetTrainerFlag(void);
 bool8 HasTrainerBeenFought(u16 trainerId);
 void SetTrainerFlag(u16 trainerId);

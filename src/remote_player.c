@@ -211,6 +211,24 @@ u8 RemotePlayer_NextTxSeq(void)
     return sTxSeq++;
 }
 
+u8 RemotePlayer_GetGender(u8 slot)
+{
+    return slot < REMOTE_MAX_PLAYERS ? sSlots[slot].gender : MALE;
+}
+
+// During a battle only the battle kinds matter; the rest is dropped.
+void RemotePlayer_DrainBattleRx(void)
+{
+    while (sRxTail != sRxHead)
+    {
+        u8 kind = REMOTE_EVENT_KIND(sRxRing[sRxTail].type);
+
+        if (kind >= REMOTE_EVENT_BPARTY)
+            RemoteBattle_HandleRx(&sRxRing[sRxTail]);
+        sRxTail = (sRxTail + 1) % RING_LEN;
+    }
+}
+
 bool8 RemotePlayer_InLoopback(void)
 {
 #if REMOTE_PLAYER_LOOPBACK
@@ -821,7 +839,7 @@ static void DrainRx(void)
     {
         u8 kind = REMOTE_EVENT_KIND(sRxRing[sRxTail].type);
 
-        if (kind == REMOTE_EVENT_BPARTY || kind == REMOTE_EVENT_BEXP)
+        if (kind >= REMOTE_EVENT_BPARTY)
             RemoteBattle_HandleRx(&sRxRing[sRxTail]);
         else
             QueueEvent(&sRxRing[sRxTail]);

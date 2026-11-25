@@ -7,12 +7,22 @@
 #include "pokemon.h"
 #include "remote_battle.h"
 #include "remote_player.h"
+#include "remote_sio.h"
+#include "overworld.h"
+#include "field_player_avatar.h"
+#include "random.h"
+#include "script.h"
+#include "sound.h"
+#include "constants/songs.h"
 #include "string_util.h"
 #include "constants/battle.h"
 #include "constants/characters.h"
+#include "constants/opponents.h"
 #include "constants/pokemon.h"
 #include "constants/species.h"
 #include "constants/trainers.h"
+
+static void CB2_RemoteBattleDone(void);
 
 // ---------------------------------------------------------------------------
 // Wire format. Both kinds keep the map in bytes 4-5 like every other event,
@@ -34,6 +44,25 @@
 #define AWARD_SENDS             10
 #define AWARD_PERIOD_FRAMES     90
 #define SEEN_AWARDS             8
+
+#define CHOICE_RING             8
+#define CHOICE_RESEND_FRAMES    10
+#define SYNC_PERIOD_FRAMES      15
+#define START_RESEND_FRAMES     20
+#define START_TIMEOUT_FRAMES    150
+#define GUEST_ACCEPT_FRAMES     24      // acks sent before the guest's battle starts
+#define GUEST_PENDING_FRAMES    100     // how long the guest waits for a moment to join
+#define REMOTE_WAIT_FRAMES      1200    // contact lost: the remote battler plays itself
+
+#define ROLE_NONE   0
+#define ROLE_HOST   1
+#define ROLE_GUEST  2
+
+#define CHOICE_TWO  1
+#define CHOICE_MON  2
+#define CHOICE_ONE  3
+
+#define FLAG_SPLIT  1
 
 struct PartyChunk
 {
@@ -58,6 +87,46 @@ struct ExpMessage
     u8 species[2];
 };
 
+// Sent by the host until the guest's game says it takes part. Two parts, as
+// a message has room for six bytes of data.
+//   part 0: seed (4), host team tag, guest team tag
+//   part 1: trainer A (2), trainer B (2), flags (1: bit 0 = one trainer plays both)
+struct StartMessage
+{
+    u8 type;
+    u8 part;
+    u8 pad;
+    u8 session;
+    u8 mapGroup;
+    u8 mapNum;
+    u8 data[6];
+};
+
+struct SyncMessage
+{
+    u8 type;
+    u8 startAck;    // the guest takes part
+    u8 ackN;        // how many choices of the other player have arrived, in order
+    u8 session;
+    u8 mapGroup;
+    u8 mapNum;
+    u8 data[6];
+};
+
+struct ChoiceMessage
+{
+    u8 type;
+    u8 n;           // position in the sender's choices
+    u8 pad;
+    u8 session;
+    u8 mapGroup;
+    u8 mapNum;
+    u8 data[6];     // RemoteChoice: kind, a, b, c, d
+};
+
+STATIC_ASSERT(sizeof(struct StartMessage) == 12, StartMessageIs12Bytes);
+STATIC_ASSERT(sizeof(struct SyncMessage) == 12, SyncMessageIs12Bytes);
+STATIC_ASSERT(sizeof(struct ChoiceMessage) == 12, ChoiceMessageIs12Bytes);
 STATIC_ASSERT(sizeof(struct PartyChunk) == 12, PartyChunkIs12Bytes);
 STATIC_ASSERT(sizeof(struct ExpMessage) == 12, ExpMessageIs12Bytes);
 
@@ -68,6 +137,7 @@ struct PeerTeam
     u8 gotCount;
     u8 asmTag;
     bool8 ready;
+    u8 readyTag;
     u8 gender;
     u8 name[NAME_BYTES];
     struct Pokemon mons[TEAM_SIZE];
@@ -92,6 +162,7 @@ struct SeenAward
 
 EWRAM_DATA bool8 gRemoteBattleActive = FALSE;
 EWRAM_DATA bool8 gRemoteSplitTrainer = FALSE;
+EWRAM_DATA bool8 gRemoteHumanBattle = FALSE;
 
 static EWRAM_DATA struct PeerTeam sPeers[REMOTE_MAX_PLAYERS] = {0};
 
@@ -99,6 +170,8 @@ static EWRAM_DATA struct PeerTeam sPeers[REMOTE_MAX_PLAYERS] = {0};
 static EWRAM_DATA struct Pokemon sSendMons[TEAM_SIZE] = {0};
 static EWRAM_DATA u8 sSendName[NAME_BYTES] = {0};
 static EWRAM_DATA u8 sSendTag = 0;
+static EWRAM_DATA u8 sSendPick[TEAM_SIZE] = {0};
+static EWRAM_DATA u8 sSendCount = 0;
 static EWRAM_DATA bool8 sSendValid = FALSE;
 static EWRAM_DATA u8 sSendCursor = 0;
 static EWRAM_DATA u16 sFrame = 0;
@@ -120,6 +193,37 @@ static EWRAM_DATA u32 sExpBefore[TEAM_SIZE] = {0};
 static EWRAM_DATA u8 sPartnerGender = MALE;
 static EWRAM_DATA u8 sPartnerName[NAME_BYTES + 1] = {0};
 static EWRAM_DATA struct Pokemon sBattleParty[PARTY_SIZE] = {0};
+
+// The human partner battle.
+static EWRAM_DATA u8 sRole = ROLE_NONE;
+static EWRAM_DATA u8 sSession = 0;
+static EWRAM_DATA u8 sSessionCounter = 0;
+static EWRAM_DATA u8 sPartnerSlot = 0;
+static EWRAM_DATA u32 sSeed = 0;
+static EWRAM_DATA bool8 sAwaitingAck = FALSE;
+static EWRAM_DATA bool8 sStartAcked = FALSE;
+static EWRAM_DATA u16 sStartWait = 0;
+static EWRAM_DATA u8 sHostTag = 0;
+static EWRAM_DATA u8 sGuestTag = 0;
+static EWRAM_DATA u16 sTrainerA = 0;
+static EWRAM_DATA u16 sTrainerB = 0;
+static EWRAM_DATA u8 sStartFlags = 0;
+static EWRAM_DATA u8 sStartParts = 0;        // bit 0 / bit 1: which parts arrived
+static EWRAM_DATA u8 sStartSession = 0;
+static EWRAM_DATA u8 sStartSlot = 0;
+static EWRAM_DATA u16 sGuestPendingAge = 0;
+static EWRAM_DATA u16 sGuestAcceptAge = 0;
+static EWRAM_DATA bool8 sGuestAccepting = FALSE;
+static EWRAM_DATA bool8 sRemoteAI = FALSE;
+static EWRAM_DATA u16 sWaitFrames = 0;
+static EWRAM_DATA u16 sBattleFrame = 0;
+static EWRAM_DATA struct RemoteChoice sOut[CHOICE_RING] = {0};
+static EWRAM_DATA u8 sOutNext = 0;           // number of the next choice to be made
+static EWRAM_DATA u8 sOutAcked = 0;          // choices before this one have arrived
+static EWRAM_DATA u8 sResendCursor = 0;
+static EWRAM_DATA struct RemoteChoice sIn[CHOICE_RING] = {0};
+static EWRAM_DATA u8 sInNext = 0;            // number of the next choice to arrive
+static EWRAM_DATA u8 sInRead = 0;            // number of the next choice to use
 
 // ---------------------------------------------------------------------------
 // The local team
@@ -178,6 +282,9 @@ static void RefreshSendBuffer(void)
     if (tag == 0)
         tag = 1;
 
+    for (i = 0; i < count; i++)
+        sSendPick[i] = pick[i];
+    sSendCount = count;
     sSendTag = tag;
     sSendValid = count != 0;
 }
@@ -186,21 +293,33 @@ static void RefreshSendBuffer(void)
 // Sending
 // ---------------------------------------------------------------------------
 
-static void SendNextChunk(void)
+// Builds an event byte by byte (the message structs are byte-aligned) and
+// queues it for the link. FALSE when the transmit ring is busy.
+static bool8 PushMessage(u8 kind, u8 b1, u8 b2, u8 b3, const u8 *data)
 {
-    struct PartyChunk chunk;
+    struct RemoteEvent event;
+    u8 *bytes = (u8 *)&event;
     u8 i;
 
-    chunk.type = REMOTE_EVENT_BPARTY;
-    chunk.idx = sSendCursor;
-    chunk.tag = sSendTag;
-    chunk.seq = RemotePlayer_NextTxSeq();
-    chunk.mapGroup = gSaveBlock1Ptr->location.mapGroup;
-    chunk.mapNum = gSaveBlock1Ptr->location.mapNum;
-    for (i = 0; i < CHUNK_BYTES; i++)
-        chunk.data[i] = SendByte(sSendCursor * CHUNK_BYTES + i);
+    bytes[0] = kind;
+    bytes[1] = b1;
+    bytes[2] = b2;
+    bytes[3] = b3;
+    bytes[4] = gSaveBlock1Ptr->location.mapGroup;
+    bytes[5] = gSaveBlock1Ptr->location.mapNum;
+    for (i = 0; i < 6; i++)
+        bytes[6 + i] = data[i];
+    return RemotePlayer_TryPushTx(&event);
+}
 
-    if (!RemotePlayer_TryPushTx((const struct RemoteEvent *)&chunk))
+static void SendNextChunk(void)
+{
+    u8 data[CHUNK_BYTES];
+    u8 i;
+
+    for (i = 0; i < CHUNK_BYTES; i++)
+        data[i] = SendByte(sSendCursor * CHUNK_BYTES + i);
+    if (!PushMessage(REMOTE_EVENT_BPARTY, sSendCursor, sSendTag, RemotePlayer_NextTxSeq(), data))
         return;
     sSendCursor++;
     if (sSendCursor >= CHUNK_COUNT)
@@ -214,7 +333,7 @@ static void SendPendingAwards(void)
     for (i = 0; i < AWARD_MAX; i++)
     {
         struct PendingAward *award = &sAwards[i];
-        struct ExpMessage msg;
+        u8 data[6];
 
         if (award->sendsLeft == 0)
             continue;
@@ -224,20 +343,13 @@ static void SendPendingAwards(void)
             continue;
         }
 
-        msg.type = REMOTE_EVENT_BEXP;
-        msg.expLo = award->exp & 0xFF;
-        msg.expHi = award->exp >> 8;
-        msg.id = award->id;
-        msg.mapGroup = gSaveBlock1Ptr->location.mapGroup;
-        msg.mapNum = gSaveBlock1Ptr->location.mapNum;
-        msg.personality[0] = award->personality & 0xFF;
-        msg.personality[1] = (award->personality >> 8) & 0xFF;
-        msg.personality[2] = (award->personality >> 16) & 0xFF;
-        msg.personality[3] = award->personality >> 24;
-        msg.species[0] = award->species & 0xFF;
-        msg.species[1] = award->species >> 8;
-
-        if (!RemotePlayer_TryPushTx((const struct RemoteEvent *)&msg))
+        data[0] = award->personality & 0xFF;
+        data[1] = (award->personality >> 8) & 0xFF;
+        data[2] = (award->personality >> 16) & 0xFF;
+        data[3] = award->personality >> 24;
+        data[4] = award->species & 0xFF;
+        data[5] = award->species >> 8;
+        if (!PushMessage(REMOTE_EVENT_BEXP, award->exp & 0xFF, award->exp >> 8, award->id, data))
             return;
         award->sendsLeft--;
         award->cooldown = AWARD_PERIOD_FRAMES;
@@ -299,6 +411,7 @@ static void CompleteTeam(struct PeerTeam *peer)
          || GetMonData(mon, MON_DATA_SPECIES) >= NUM_SPECIES)
             ZeroMonData(mon);
     }
+    peer->readyTag = peer->asmTag;
     peer->ready = GetMonData(&peer->mons[0], MON_DATA_SPECIES) != SPECIES_NONE;
 }
 
@@ -390,6 +503,66 @@ static void HandleExpMessage(const struct ExpMessage *msg)
     ApplyAward(personality, species, exp);
 }
 
+static u8 sLastSession = 0;
+
+static void HandleStartMessage(u8 slot, const struct StartMessage *msg)
+{
+    if (sRole != ROLE_NONE || gMain.inBattle || gRemoteBattleActive)
+        return;
+    if (msg->session == 0 || msg->session == sLastSession)
+        return;
+    if (msg->session != sStartSession)
+    {
+        sStartSession = msg->session;
+        sStartParts = 0;
+        sStartSlot = slot;
+        sGuestPendingAge = 0;
+    }
+    if (msg->part == 0)
+    {
+        sSeed = msg->data[0] | (msg->data[1] << 8) | (msg->data[2] << 16) | ((u32)msg->data[3] << 24);
+        sHostTag = msg->data[4];
+        sGuestTag = msg->data[5];
+        sStartParts |= 1;
+    }
+    else if (msg->part == 1)
+    {
+        sTrainerA = msg->data[0] | (msg->data[1] << 8);
+        sTrainerB = msg->data[2] | (msg->data[3] << 8);
+        sStartFlags = msg->data[4];
+        sStartParts |= 2;
+    }
+}
+
+static void HandleSyncMessage(const struct SyncMessage *msg)
+{
+    if (sRole == ROLE_NONE || msg->session != sSession)
+        return;
+    if (sRole == ROLE_HOST && msg->startAck)
+        sStartAcked = TRUE;
+    // Only an acknowledgement for choices that were really sent counts.
+    if ((u8)(msg->ackN - sOutAcked) <= (u8)(sOutNext - sOutAcked))
+        sOutAcked = msg->ackN;
+}
+
+static void HandleChoiceMessage(const struct ChoiceMessage *msg)
+{
+    struct RemoteChoice *choice;
+
+    if (sRole == ROLE_NONE || msg->session != sSession)
+        return;
+    // Choices arrive in order; anything else is a repeat or has to wait.
+    if (msg->n != sInNext || (u8)(sInNext - sInRead) >= CHOICE_RING)
+        return;
+    choice = &sIn[sInNext & (CHOICE_RING - 1)];
+    choice->kind = msg->data[0];
+    choice->a = msg->data[1];
+    choice->b = msg->data[2];
+    choice->c = msg->data[3];
+    choice->d = msg->data[4];
+    sInNext++;
+}
+
 void RemoteBattle_HandleRx(const struct RemoteEvent *event)
 {
     u8 slot = REMOTE_EVENT_SLOT(event->type);
@@ -401,10 +574,203 @@ void RemoteBattle_HandleRx(const struct RemoteEvent *event)
         HandlePartyChunk(slot, (const struct PartyChunk *)event);
     else if (kind == REMOTE_EVENT_BEXP)
         HandleExpMessage((const struct ExpMessage *)event);
+    else if (kind == REMOTE_EVENT_BSTART)
+        HandleStartMessage(slot, (const struct StartMessage *)event);
+    else if (kind == REMOTE_EVENT_BSYNC)
+        HandleSyncMessage((const struct SyncMessage *)event);
+    else if (kind == REMOTE_EVENT_BCHOICE)
+        HandleChoiceMessage((const struct ChoiceMessage *)event);
 }
 
 // ---------------------------------------------------------------------------
-// Per frame
+// The human partner: messages that go out
+// ---------------------------------------------------------------------------
+
+static void ResetChoiceRings(void)
+{
+    sOutNext = 0;
+    sOutAcked = 0;
+    sResendCursor = 0;
+    sInNext = 0;
+    sInRead = 0;
+    sWaitFrames = 0;
+    sRemoteAI = FALSE;
+}
+
+static void SendSync(void)
+{
+    u8 data[6] = {0, 0, 0, 0, 0, 0};
+
+    PushMessage(REMOTE_EVENT_BSYNC, sRole == ROLE_GUEST, sInNext, sSession, data);
+}
+
+static void SendChoice(u8 n)
+{
+    struct RemoteChoice *choice = &sOut[n & (CHOICE_RING - 1)];
+    u8 data[6];
+
+    data[0] = choice->kind;
+    data[1] = choice->a;
+    data[2] = choice->b;
+    data[3] = choice->c;
+    data[4] = choice->d;
+    data[5] = 0;
+    PushMessage(REMOTE_EVENT_BCHOICE, n, 0, sSession, data);
+}
+
+static void SendStart(void)
+{
+    u8 data[6];
+
+    data[0] = sSeed & 0xFF;
+    data[1] = (sSeed >> 8) & 0xFF;
+    data[2] = (sSeed >> 16) & 0xFF;
+    data[3] = sSeed >> 24;
+    data[4] = sHostTag;
+    data[5] = sGuestTag;
+    PushMessage(REMOTE_EVENT_BSTART, 0, 0, sSession, data);
+
+    data[0] = sTrainerA & 0xFF;
+    data[1] = sTrainerA >> 8;
+    data[2] = sTrainerB & 0xFF;
+    data[3] = sTrainerB >> 8;
+    data[4] = sStartFlags;
+    data[5] = 0;
+    PushMessage(REMOTE_EVENT_BSTART, 1, 0, sSession, data);
+}
+
+static void QueueOutgoing(u8 kind, u8 a, u8 b, u8 c, u8 d)
+{
+    struct RemoteChoice *choice;
+
+    if ((u8)(sOutNext - sOutAcked) >= CHOICE_RING)
+        return;     // the other game is far behind; it will give up first
+    choice = &sOut[sOutNext & (CHOICE_RING - 1)];
+    choice->kind = kind;
+    choice->a = a;
+    choice->b = b;
+    choice->c = c;
+    choice->d = d;
+    SendChoice(sOutNext);
+    sOutNext++;
+}
+
+// ---------------------------------------------------------------------------
+// Choices made in the battle menu
+// ---------------------------------------------------------------------------
+
+static u8 LocalBattler(void)
+{
+    return sRole == ROLE_GUEST ? 2 : 0;
+}
+
+static u8 RemoteBattler(void)
+{
+    return sRole == ROLE_GUEST ? 0 : 2;
+}
+
+bool8 RemoteBattle_IsGuest(void)
+{
+    return gRemoteHumanBattle && sRole == ROLE_GUEST;
+}
+
+bool8 RemoteBattle_ControlsBattler(u8 battler)
+{
+    return gRemoteHumanBattle && !sRemoteAI && battler == RemoteBattler();
+}
+
+// The bag would spend items the other game does not know about, and the
+// guest's party menu would show the wrong half of the party.
+bool8 RemoteBattle_BlockAction(u8 cursor)
+{
+    if (!gRemoteHumanBattle)
+        return FALSE;
+    if (cursor == 1)
+        return TRUE;
+    return cursor == 2 && sRole == ROLE_GUEST;
+}
+
+void RemoteBattle_CaptureTwoReturn(u8 battler, u8 ret8, u16 ret16)
+{
+    if (!gRemoteHumanBattle || sRemoteAI || battler != LocalBattler())
+        return;
+    switch (ret8)
+    {
+    case B_ACTION_USE_MOVE:
+    case B_ACTION_USE_ITEM:
+    case B_ACTION_SWITCH:
+    case B_ACTION_RUN:
+    case B_ACTION_CANCEL_PARTNER:
+    case B_ACTION_EXEC_SCRIPT:
+        QueueOutgoing(CHOICE_TWO, ret8, ret16 & 0xFF, ret16 >> 8, 0);
+        break;
+    }
+}
+
+void RemoteBattle_CaptureChosenMon(u8 battler, u8 partyId, const u8 *order)
+{
+    if (!gRemoteHumanBattle || sRemoteAI || battler != LocalBattler())
+        return;
+    if (order != NULL)
+        QueueOutgoing(CHOICE_MON, partyId, order[0], order[1], order[2]);
+    else
+        QueueOutgoing(CHOICE_MON, partyId, 0, 1, 2);
+}
+
+void RemoteBattle_CaptureOne(u8 battler, u16 ret)
+{
+    if (!gRemoteHumanBattle || sRemoteAI || battler != LocalBattler())
+        return;
+    QueueOutgoing(CHOICE_ONE, ret & 0xFF, ret >> 8, 0, 0);
+}
+
+bool8 RemoteBattle_PopChoice(struct RemoteChoice *choice)
+{
+    if (sInRead == sInNext)
+        return FALSE;
+    *choice = sIn[sInRead & (CHOICE_RING - 1)];
+    sInRead++;
+    sWaitFrames = 0;
+    return TRUE;
+}
+
+bool8 RemoteBattle_WaitTimedOut(void)
+{
+    return ++sWaitFrames >= REMOTE_WAIT_FRAMES;
+}
+
+void RemoteBattle_GiveUpOnRemote(void)
+{
+    sRemoteAI = TRUE;
+}
+
+void RemoteBattle_ApplySeed(void)
+{
+    if (gRemoteHumanBattle)
+        gRngValue = sSeed;
+}
+
+void RemoteBattle_BattleTick(void)
+{
+    if (!gRemoteHumanBattle || sRole == ROLE_NONE)
+        return;
+
+    sBattleFrame++;
+    RemoteSio_Tick();
+    RemotePlayer_DrainBattleRx();
+    if (sBattleFrame % SYNC_PERIOD_FRAMES == 0)
+        SendSync();
+    if (sOutAcked != sOutNext && sBattleFrame % CHOICE_RESEND_FRAMES == 0)
+    {
+        if ((u8)(sResendCursor - sOutAcked) >= (u8)(sOutNext - sOutAcked))
+            sResendCursor = sOutAcked;
+        SendChoice(sResendCursor);
+        sResendCursor++;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per frame (overworld)
 // ---------------------------------------------------------------------------
 
 void RemoteBattle_Init(void)
@@ -414,11 +780,128 @@ void RemoteBattle_Init(void)
     for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
     {
         sPeers[i].ready = FALSE;
+        sPeers[i].readyTag = 0;
         sPeers[i].gotCount = 0;
         sPeers[i].asmTag = 0;
     }
     sSendValid = FALSE;
     sSendCursor = 0;
+}
+
+bool8 RemoteBattle_AwaitingStartAck(void)
+{
+    return sAwaitingAck;
+}
+
+static void TickHostStart(void)
+{
+    if (!sAwaitingAck)
+        return;
+    if (sStartAcked)
+    {
+        sAwaitingAck = FALSE;
+        return;
+    }
+    if (sStartWait % START_RESEND_FRAMES == 0)
+        SendStart();
+    if (++sStartWait >= START_TIMEOUT_FRAMES)
+    {
+        // Nobody answered: the partner is played by the game.
+        sAwaitingAck = FALSE;
+        gRemoteHumanBattle = FALSE;
+        sRole = ROLE_NONE;
+    }
+}
+
+static bool8 GuestCanJoin(void)
+{
+    struct PeerTeam *peer = &sPeers[sStartSlot];
+
+    if (gMain.inBattle || ArePlayerFieldControlsLocked() || ScriptContext_IsEnabled())
+        return FALSE;
+    if (gPlayerAvatar.tileTransitionState != T_NOT_MOVING)
+        return FALSE;
+    if (sTrainerA == 0 || sTrainerA >= TRAINERS_COUNT)
+        return FALSE;
+    // Both games must build the same teams.
+    if (!sSendValid || sSendTag != sGuestTag)
+        return FALSE;
+    return peer->ready && peer->readyTag == sHostTag;
+}
+
+static void StartGuestBattle(void)
+{
+    struct PeerTeam *peer = &sPeers[sStartSlot];
+    u8 i;
+
+    gTrainerBattleOpponent_A = sTrainerA;
+    gTrainerBattleOpponent_B = sTrainerB;
+    gBattleTypeFlags = BATTLE_TYPE_TRAINER | BATTLE_TYPE_DOUBLE | BATTLE_TYPE_TWO_OPPONENTS
+                     | BATTLE_TYPE_MULTI | BATTLE_TYPE_INGAME_PARTNER;
+    gRemoteSplitTrainer = (sStartFlags & FLAG_SPLIT) != 0;
+
+    // The same battle party as the host's: their team in front, mine behind.
+    SavePlayerParty();
+    for (i = 0; i < PARTY_SIZE; i++)
+        ZeroMonData(&gPlayerParty[i]);
+    for (i = 0; i < TEAM_SIZE; i++)
+    {
+        gPlayerParty[i] = peer->mons[i];
+        gPlayerParty[TEAM_SIZE + i] = sSendMons[i];
+    }
+    CalculatePlayerPartyCount();
+    sPickCount = sSendCount;
+    for (i = 0; i < TEAM_SIZE; i++)
+        sPick[i] = sSendPick[i];
+
+    for (i = 0; i < NAME_BYTES; i++)
+        sPartnerName[i] = peer->name[i];
+    sPartnerName[NAME_BYTES] = EOS;
+    sPartnerGender = RemotePlayer_GetGender(sStartSlot);
+    gPartnerTrainerId = TRAINER_STEVEN_PARTNER;
+
+    gRemoteBattleActive = TRUE;
+    gRemoteHumanBattle = TRUE;
+    ResetChoiceRings();
+    sMoneyBefore = gSaveBlock1Ptr->money;
+    sRealCallback = NULL;
+    gMain.savedCallback = CB2_RemoteBattleDone;
+    sWrapped = TRUE;
+    BattleSetup_StartRemoteGuestBattle();
+}
+
+static void TickGuest(void)
+{
+    if (sRole == ROLE_GUEST && sGuestAccepting)
+    {
+        // Tell the host, a few times, before this game leaves the overworld.
+        if (sGuestAcceptAge % 4 == 0)
+            SendSync();
+        if (++sGuestAcceptAge >= GUEST_ACCEPT_FRAMES)
+        {
+            sGuestAccepting = FALSE;
+            StartGuestBattle();
+        }
+        return;
+    }
+
+    if (sRole != ROLE_NONE || sStartParts != 3)
+        return;
+    if (++sGuestPendingAge > GUEST_PENDING_FRAMES)
+    {
+        sStartParts = 0;
+        return;
+    }
+    if (!GuestCanJoin())
+        return;
+
+    sRole = ROLE_GUEST;
+    sSession = sStartSession;
+    sLastSession = sStartSession;
+    sStartParts = 0;
+    sGuestAccepting = TRUE;
+    sGuestAcceptAge = 0;
+    LockPlayerFieldControls();
 }
 
 void RemoteBattle_Tick(void)
@@ -427,7 +910,7 @@ void RemoteBattle_Tick(void)
     if (!REMOTE_BATTLE_ENABLED)
         return;
 
-    if (sFrame % REFRESH_PERIOD_FRAMES == 1)
+    if (sFrame % REFRESH_PERIOD_FRAMES == 1 && !sAwaitingAck && !sGuestAccepting)
         RefreshSendBuffer();
 
 #if REMOTE_PLAYER_LOOPBACK
@@ -448,6 +931,8 @@ void RemoteBattle_Tick(void)
     }
 #endif
 
+    TickHostStart();
+    TickGuest();
     if (sSendValid && sFrame % CHUNK_PERIOD_FRAMES == 0)
         SendNextChunk();
     SendPendingAwards();
@@ -508,6 +993,7 @@ bool8 RemoteBattle_ShouldRematch(void)
 static void CB2_RemoteBattleDone(void)
 {
     u8 i;
+    bool8 guest = sRole == ROLE_GUEST;
 
     if (gRemoteBattleActive)
     {
@@ -517,9 +1003,11 @@ static void CB2_RemoteBattleDone(void)
             sBattleParty[i] = gPlayerParty[i];
         LoadPlayerParty();
         for (i = 0; i < sPickCount; i++)
-            gPlayerParty[sPick[i]] = sBattleParty[i];
+            gPlayerParty[sPick[i]] = sBattleParty[guest ? TEAM_SIZE + i : i];
 
-        if (!RemotePlayer_InLoopback())
+        // Against the game's partner, the partner's experience goes by message.
+        // With a person, their own game earned it.
+        if (!gRemoteHumanBattle && !RemotePlayer_InLoopback())
         {
             for (i = 0; i < TEAM_SIZE; i++)
             {
@@ -527,20 +1015,34 @@ static void CB2_RemoteBattleDone(void)
                     QueueAward(&sBattleParty[TEAM_SIZE + i], sExpBefore[i]);
             }
         }
-        gRemoteBattleActive = FALSE;
-        gRemoteSplitTrainer = FALSE;
     }
 
-    if (sRematch)
+    if (sRematch || guest)
     {
-        // A battle against a trainer already beaten pays nothing again.
+        // A battle against a trainer already beaten, or fought as the guest,
+        // pays nothing.
         if (gSaveBlock1Ptr->money > sMoneyBefore)
             gSaveBlock1Ptr->money = sMoneyBefore;
         sRematch = FALSE;
     }
+
+    gRemoteBattleActive = FALSE;
+    gRemoteSplitTrainer = FALSE;
+    gRemoteHumanBattle = FALSE;
+    sRole = ROLE_NONE;
+    sRemoteAI = FALSE;
     sLockedSlot = REMOTE_MAX_PLAYERS;
     sWrapped = FALSE;
-    SetMainCallback2(sRealCallback);
+
+    if (guest)
+    {
+        UnlockPlayerFieldControls();
+        SetMainCallback2(gBattleOutcome == B_OUTCOME_WON ? CB2_ReturnToField : CB2_WhiteOut);
+    }
+    else
+    {
+        SetMainCallback2(sRealCallback);
+    }
 }
 
 bool8 RemoteBattle_PrepareTrainerBattle(void)
@@ -548,18 +1050,34 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     u8 slot;
     u8 i;
     struct PeerTeam *peer;
+    bool8 human;
 
     gRemoteBattleActive = FALSE;
     gRemoteSplitTrainer = FALSE;
+    gRemoteHumanBattle = FALSE;
+    sRole = ROLE_NONE;
+    sAwaitingAck = FALSE;
     sMoneyBefore = gSaveBlock1Ptr->money;
 
     if (!REMOTE_BATTLE_ENABLED || !FindPartner(&slot) || !TrainerFitsPartnerBattle())
         goto finish;
-    sPickCount = BuildMyTeam(sPick);
+    peer = &sPeers[slot];
+
+    // With a person on the other end both games build the battle from the
+    // team snapshots that were sent; otherwise the live party is used.
+    human = !RemotePlayer_InLoopback() && sSendValid && peer->readyTag != 0;
+    if (human)
+    {
+        sPickCount = sSendCount;
+        for (i = 0; i < TEAM_SIZE; i++)
+            sPick[i] = sSendPick[i];
+    }
+    else
+    {
+        sPickCount = BuildMyTeam(sPick);
+    }
     if (sPickCount == 0)
         goto finish;
-
-    peer = &sPeers[slot];
 
     if (!(gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS))
     {
@@ -576,7 +1094,7 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     for (i = 0; i < PARTY_SIZE; i++)
         ZeroMonData(&gPlayerParty[i]);
     for (i = 0; i < sPickCount; i++)
-        gPlayerParty[i] = gSaveBlock1Ptr->playerParty[sPick[i]];
+        gPlayerParty[i] = human ? sSendMons[i] : gSaveBlock1Ptr->playerParty[sPick[i]];
     for (i = 0; i < TEAM_SIZE; i++)
     {
         gPlayerParty[TEAM_SIZE + i] = peer->mons[i];
@@ -589,6 +1107,28 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     sPartnerName[NAME_BYTES] = EOS;
     gPartnerTrainerId = TRAINER_STEVEN_PARTNER;
     gRemoteBattleActive = TRUE;
+
+    if (human)
+    {
+        // Ask the other game to run the same battle.
+        sRole = ROLE_HOST;
+        sSessionCounter++;
+        if (sSessionCounter == 0)
+            sSessionCounter = 1;
+        sSession = sSessionCounter;
+        sSeed = Random() | ((u32)Random() << 16);
+        sHostTag = sSendTag;
+        sGuestTag = peer->readyTag;
+        sTrainerA = gTrainerBattleOpponent_A;
+        sTrainerB = gTrainerBattleOpponent_B;
+        sStartFlags = gRemoteSplitTrainer ? FLAG_SPLIT : 0;
+        sPartnerSlot = slot;
+        sStartAcked = FALSE;
+        sStartWait = 0;
+        sAwaitingAck = TRUE;
+        gRemoteHumanBattle = TRUE;
+        ResetChoiceRings();
+    }
 
 finish:
     if (gRemoteBattleActive || sRematch)

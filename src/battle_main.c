@@ -696,6 +696,8 @@ static void CB2_InitBattleInternal(void)
 
     if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_RECORDED)))
     {
+        // With a human partner both games draw the same trainer team.
+        RemoteBattle_ApplySeed();
         if (gRemoteSplitTrainer)
         {
             SplitTrainerPartyOverOpponents();
@@ -1871,6 +1873,7 @@ static void CB2_HandleStartMultiBattle(void)
 
 void BattleMainCB2(void)
 {
+    RemoteBattle_BattleTick();
     AnimateSprites();
     BuildOamBuffer();
     RunTextPrinters();
