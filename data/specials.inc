@@ -540,3 +540,17 @@ gSpecials::
 	def_special RemoveRecordsWindow
 	def_special CloseDeptStoreElevatorWindow
 	def_special TrySetBattleTowerLinkType
+	def_special RemoteSocial_Prepare
+	def_special RemoteSocial_SendRequest
+	def_special RemoteSocial_WaitReply, waitstate=1
+	def_special RemoteSocial_PrepareIncoming
+	def_special RemoteSocial_Answer
+	def_special RemoteSocial_GetAgreedKind
+	def_special RemoteSocial_StartBattle, waitstate=1
+	def_special RemoteSocial_OfferMon
+	def_special RemoteSocial_WaitOffer, waitstate=1
+	def_special RemoteSocial_Confirm
+	def_special RemoteSocial_WaitConfirm, waitstate=1
+	def_special RemoteSocial_FinishTrade
+	def_special RemoteSocial_ComposeChat, waitstate=1
+	def_special RemoteSocial_SendChat

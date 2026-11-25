@@ -1,0 +1,753 @@
+#include "global.h"
+#include "easy_chat.h"
+#include "event_data.h"
+#include "field_player_avatar.h"
+#include "main.h"
+#include "overworld.h"
+#include "party_menu.h"
+#include "pokedex.h"
+#include "pokemon.h"
+#include "random.h"
+#include "remote_battle.h"
+#include "remote_player.h"
+#include "remote_social.h"
+#include "script.h"
+#include "strings.h"
+#include "string_util.h"
+#include "task.h"
+#include "constants/characters.h"
+#include "constants/easy_chat.h"
+
+// ---------------------------------------------------------------------------
+// Wire format: kind 15, the sub type in the second byte, the map in bytes
+// 4-5 like every other event.
+// ---------------------------------------------------------------------------
+
+#define SUB_CHAT        1   // a = message number, b = part (0-2), data = 3 words
+#define SUB_REQUEST     2   // a = SOCIAL_REQUEST_*, b = session
+#define SUB_REPLY       3   // a = 1 yes / 0 no, b = session
+#define SUB_CHUNK       4   // a = index, b = session, data = 6 bytes of a Pokémon (index OFFER_CHUNKS: checksum)
+#define SUB_CANCEL      5   // b = session
+#define SUB_OK          6   // b = session: "I accept the trade"
+
+#define CHAT_WORDS          9
+#define CHAT_PARTS          3
+#define CHAT_REPEATS        3
+#define CHAT_REPEAT_FRAMES  10
+
+#define OFFER_CHUNKS    ((sizeof(struct Pokemon) + 5) / 6)
+#define OFFER_MESSAGES  (OFFER_CHUNKS + 1)
+#define OFFER_PERIOD    4
+#define REQUEST_RESEND_FRAMES   20
+#define REQUEST_TIMEOUT_FRAMES  900     // the other player gets 15 s to answer
+#define INCOMING_TIMEOUT_FRAMES 1800    // a request nobody had time to read
+#define TRADE_TIMEOUT_FRAMES    7200    // choosing a Pokémon and deciding
+#define CLOSING_FRAMES          150     // keep acknowledging after finishing
+#define REPLY_REPEAT_FRAMES     10
+#define REPLY_REPEATS           6
+
+#define MAX_DISTANCE    12
+
+enum
+{
+    ST_IDLE,
+    ST_REQUESTING,      // asked, waiting for a reply
+    ST_ASKED,           // was asked, the player is deciding
+    ST_AGREED,          // both said yes
+    ST_CLOSING,         // finished, still repeating the last acknowledgement
+};
+
+enum
+{
+    PHASE_NONE,
+    PHASE_OFFERED,      // I picked a Pokémon and keep sending it
+    PHASE_CONFIRMED,    // I accepted the trade
+};
+
+struct ChatInbox
+{
+    u8 number;
+    u8 gotMask;
+    u8 shownNumber;
+    u16 words[CHAT_WORDS];
+};
+
+static EWRAM_DATA u8 sState = ST_IDLE;
+static EWRAM_DATA u8 sKind = 0;
+static EWRAM_DATA u8 sPeer = 0;
+static EWRAM_DATA u8 sSession = 0;
+static EWRAM_DATA u8 sSessionCounter = 0;
+static EWRAM_DATA u16 sTimer = 0;
+static EWRAM_DATA u16 sFrame = 0;
+static EWRAM_DATA u8 sReplyResult = 0;      // 0 waiting, 1 yes, 2 no, 3 no answer
+static EWRAM_DATA u8 sReplyRepeats = 0;
+static EWRAM_DATA u8 sReplyValue = 0;
+static EWRAM_DATA bool8 sShownRequest = FALSE;
+static EWRAM_DATA bool8 sBattleReady = FALSE;
+static EWRAM_DATA bool8 sIsRequester = FALSE;
+static EWRAM_DATA u8 sClosedSession = 0;
+
+static EWRAM_DATA u8 sPhase = PHASE_NONE;
+static EWRAM_DATA u8 sOfferSlot = 0;
+static EWRAM_DATA u8 sCursor = 0;
+static EWRAM_DATA struct Pokemon sOffer = {0};
+static EWRAM_DATA struct Pokemon sTheirs = {0};
+static EWRAM_DATA u8 sGot[OFFER_MESSAGES] = {0};
+static EWRAM_DATA u8 sGotCount = 0;
+static EWRAM_DATA u16 sTheirSum = 0;
+static EWRAM_DATA bool8 sHaveTheirs = FALSE;
+static EWRAM_DATA bool8 sTheirOk = FALSE;
+static EWRAM_DATA bool8 sCancelled = FALSE;
+
+static EWRAM_DATA struct ChatInbox sInbox[REMOTE_MAX_PLAYERS] = {{0}};
+static EWRAM_DATA u16 sChatOut[CHAT_WORDS] = {0};
+static EWRAM_DATA u8 sChatNumber = 0;
+static EWRAM_DATA u8 sChatRepeatsLeft = 0;
+static EWRAM_DATA u8 sChatSlotShown = 0;
+static EWRAM_DATA bool8 sChatPending = FALSE;
+static EWRAM_DATA u8 sChatText[160] = {0};
+
+void RemoteSocial_Init(void)
+{
+    u8 i;
+
+    sState = ST_IDLE;
+    sSessionCounter = Random() & 0xFF;
+    sPhase = PHASE_NONE;
+    sReplyRepeats = 0;
+    sChatRepeatsLeft = 0;
+    sChatPending = FALSE;
+    sBattleReady = FALSE;
+    for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
+    {
+        sInbox[i].number = 0;
+        sInbox[i].gotMask = 0;
+        sInbox[i].shownNumber = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sending
+// ---------------------------------------------------------------------------
+
+static bool8 Send(u8 sub, u8 a, u8 b, const u8 *data)
+{
+    struct RemoteEvent event;
+    u8 *bytes = (u8 *)&event;
+    u8 i;
+
+    bytes[0] = REMOTE_EVENT_SOCIAL;
+    bytes[1] = sub;
+    bytes[2] = a;
+    bytes[3] = b;
+    bytes[4] = gSaveBlock1Ptr->location.mapGroup;
+    bytes[5] = gSaveBlock1Ptr->location.mapNum;
+    for (i = 0; i < 6; i++)
+        bytes[6 + i] = data != NULL ? data[i] : 0;
+    return RemotePlayer_TryPushTx(&event);
+}
+
+static void SendChatParts(void)
+{
+    u8 part;
+    u8 data[6];
+    u8 i;
+
+    for (part = 0; part < CHAT_PARTS; part++)
+    {
+        for (i = 0; i < 3; i++)
+        {
+            data[i * 2] = sChatOut[part * 3 + i] & 0xFF;
+            data[i * 2 + 1] = sChatOut[part * 3 + i] >> 8;
+        }
+        Send(SUB_CHAT, sChatNumber, part, data);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Receiving
+// ---------------------------------------------------------------------------
+
+static u16 Checksum(const u8 *bytes, u16 length)
+{
+    u16 sum = 0;
+    u16 i;
+
+    for (i = 0; i < length; i++)
+        sum = (u16)((sum << 3) | (sum >> 13)) + bytes[i] + 1;
+    return sum;
+}
+
+static void ClearTrade(void)
+{
+    u8 i;
+
+    sPhase = PHASE_NONE;
+    sCursor = 0;
+    sGotCount = 0;
+    sHaveTheirs = FALSE;
+    sTheirOk = FALSE;
+    sCancelled = FALSE;
+    for (i = 0; i < OFFER_MESSAGES; i++)
+        sGot[i] = FALSE;
+}
+
+static void Reset(void)
+{
+    if (sState != ST_IDLE)
+        sClosedSession = sSession;
+    sState = ST_IDLE;
+    sShownRequest = FALSE;
+    ClearTrade();
+}
+
+static void StoreChat(u8 slot, u8 number, u8 part, const u8 *data)
+{
+    struct ChatInbox *inbox = &sInbox[slot];
+    u8 i;
+
+    if (part >= CHAT_PARTS || number == 0 || number == inbox->shownNumber)
+        return;
+    if (number != inbox->number)
+    {
+        inbox->number = number;
+        inbox->gotMask = 0;
+    }
+    for (i = 0; i < 3; i++)
+        inbox->words[part * 3 + i] = data[i * 2] | (data[i * 2 + 1] << 8);
+    inbox->gotMask |= 1 << part;
+    if (inbox->gotMask == (1 << CHAT_PARTS) - 1)
+    {
+        inbox->shownNumber = number;
+        inbox->gotMask = 0;
+        sChatPending = TRUE;
+        sChatSlotShown = slot;
+    }
+}
+
+static void StoreChunk(u8 index, const u8 *data)
+{
+    u8 *dest = (u8 *)&sTheirs;
+    u8 i;
+
+    if (index >= OFFER_MESSAGES || sGot[index])
+        return;
+    if (index == OFFER_CHUNKS)
+    {
+        sTheirSum = data[0] | (data[1] << 8);
+    }
+    else
+    {
+        for (i = 0; i < 6; i++)
+        {
+            u16 at = index * 6 + i;
+
+            if (at < sizeof(struct Pokemon))
+                dest[at] = data[i];
+        }
+    }
+    sGot[index] = TRUE;
+    sGotCount++;
+    if (sGotCount == OFFER_MESSAGES)
+    {
+        if (Checksum((u8 *)&sTheirs, sizeof(struct Pokemon)) == sTheirSum
+         && !GetMonData(&sTheirs, MON_DATA_SANITY_IS_BAD_EGG)
+         && GetMonData(&sTheirs, MON_DATA_SPECIES) != SPECIES_NONE
+         && GetMonData(&sTheirs, MON_DATA_SPECIES) < NUM_SPECIES)
+        {
+            sHaveTheirs = TRUE;
+        }
+        else
+        {
+            // Damaged on the way: ask for everything again.
+            sGotCount = 0;
+            for (i = 0; i < OFFER_MESSAGES; i++)
+                sGot[i] = FALSE;
+        }
+    }
+}
+
+void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
+{
+    const u8 *m = (const u8 *)event;
+    u8 sub = m[1];
+    u8 a = m[2];
+    u8 b = m[3];
+    const u8 *data = m + 6;
+
+    if (slot >= REMOTE_MAX_PLAYERS)
+        return;
+
+    switch (sub)
+    {
+    case SUB_CHAT:
+        StoreChat(slot, a, b, data);
+        break;
+    case SUB_REQUEST:
+        if (b == sClosedSession && sState == ST_IDLE)
+        {
+            // An old copy of a request that was already answered.
+        }
+        else if (sState == ST_IDLE)
+        {
+            sState = ST_ASKED;
+            sKind = a;
+            sPeer = slot;
+            sSession = b;
+            sTimer = 0;
+            sShownRequest = FALSE;
+            ClearTrade();
+        }
+        else if (!(sSession == b && sPeer == slot))
+        {
+            // Busy with something else: say no.
+            sReplyValue = 0;
+            Send(SUB_REPLY, 0, b, NULL);
+        }
+        break;
+    case SUB_REPLY:
+        if (sState == ST_REQUESTING && b == sSession && slot == sPeer)
+            sReplyResult = a != 0 ? 1 : 2;
+        break;
+    case SUB_CHUNK:
+        if (sState == ST_AGREED && b == sSession && slot == sPeer && sKind == SOCIAL_REQUEST_TRADE)
+            StoreChunk(a, data);
+        break;
+    case SUB_CANCEL:
+        if (b == sSession && slot == sPeer && sState != ST_IDLE)
+            sCancelled = TRUE;
+        break;
+    case SUB_OK:
+        if (b == sSession && slot == sPeer && sState != ST_IDLE)
+            sTheirOk = TRUE;
+        break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frame
+// ---------------------------------------------------------------------------
+
+static bool8 OverworldIsFree(void)
+{
+    return gMain.callback2 == CB2_Overworld
+        && !ScriptContext_IsEnabled()
+        && !ArePlayerFieldControlsLocked()
+        && gPlayerAvatar.tileTransitionState == T_NOT_MOVING;
+}
+
+static void BuildChatText(u8 slot)
+{
+    u8 *out = sChatText;
+    const u8 *name = RemoteBattle_GetNameOfSlot(slot);
+    u8 *lineStart;
+    u8 i;
+    u8 lines = 0;
+    u8 word[24];
+
+    out = StringCopy(out, name != NULL ? name : gText_Friend);
+    *out++ = CHAR_COLON;
+    *out++ = CHAR_NEWLINE;
+    lineStart = out;
+    for (i = 0; i < CHAT_WORDS; i++)
+    {
+        u16 w = sInbox[slot].words[i];
+        u8 length;
+
+        if (w == EC_EMPTY_WORD)
+            continue;
+        ConvertEasyChatWordsToString(word, &w, 1, 1);
+        length = StringLength(word);
+        if (length == 0)
+            continue;
+        if (out != lineStart && (out - lineStart) + 1 + length > 20)
+        {
+            lines++;
+            *out++ = (lines & 1) ? CHAR_PROMPT_SCROLL : CHAR_NEWLINE;
+            lineStart = out;
+        }
+        else if (out != lineStart)
+        {
+            *out++ = CHAR_SPACE;
+        }
+        out = StringCopy(out, word);
+    }
+    *out = EOS;
+    StringCopy(gStringVar4, sChatText);
+}
+
+void RemoteSocial_Tick(void)
+{
+    sFrame++;
+
+    if (sChatRepeatsLeft != 0 && sFrame % CHAT_REPEAT_FRAMES == 0)
+    {
+        SendChatParts();
+        sChatRepeatsLeft--;
+    }
+
+    if (sReplyRepeats != 0 && sFrame % REPLY_REPEAT_FRAMES == 0)
+    {
+        Send(SUB_REPLY, sReplyValue, sSession, NULL);
+        sReplyRepeats--;
+    }
+
+    switch (sState)
+    {
+    case ST_REQUESTING:
+        sTimer++;
+        if (sTimer % REQUEST_RESEND_FRAMES == 1)
+            Send(SUB_REQUEST, sKind, sSession, NULL);
+        if (sTimer >= REQUEST_TIMEOUT_FRAMES && sReplyResult == 0)
+            sReplyResult = 3;
+        break;
+    case ST_ASKED:
+        sTimer++;
+        if (!sShownRequest && OverworldIsFree())
+        {
+            sShownRequest = TRUE;
+            ScriptContext_SetupScript(RemoteSocial_EventScript_Incoming);
+        }
+        else if (!sShownRequest && sTimer >= INCOMING_TIMEOUT_FRAMES)
+        {
+            Reset();
+        }
+        break;
+    case ST_AGREED:
+        sTimer++;
+        if (sKind == SOCIAL_REQUEST_TRADE)
+        {
+            if (sPhase != PHASE_NONE && sFrame % OFFER_PERIOD == 0)
+            {
+                u8 data[6];
+                u8 i;
+
+                if (sCursor == OFFER_CHUNKS)
+                {
+                    u16 sum = Checksum((u8 *)&sOffer, sizeof(struct Pokemon));
+
+                    data[0] = sum & 0xFF;
+                    data[1] = sum >> 8;
+                    for (i = 2; i < 6; i++)
+                        data[i] = 0;
+                }
+                else
+                {
+                    for (i = 0; i < 6; i++)
+                    {
+                        u16 at = sCursor * 6 + i;
+
+                        data[i] = at < sizeof(struct Pokemon) ? ((u8 *)&sOffer)[at] : 0;
+                    }
+                }
+                if (Send(SUB_CHUNK, sCursor, sSession, data))
+                    sCursor = (sCursor + 1) % OFFER_MESSAGES;
+            }
+            if (sPhase == PHASE_CONFIRMED && sFrame % REPLY_REPEAT_FRAMES == 0)
+                Send(SUB_OK, 0, sSession, NULL);
+            if (sTimer >= TRADE_TIMEOUT_FRAMES)
+                sCancelled = TRUE;
+        }
+        break;
+    case ST_CLOSING:
+        sTimer++;
+        if (sFrame % REPLY_REPEAT_FRAMES == 0)
+            Send(SUB_OK, 0, sSession, NULL);
+        if (sTimer >= CLOSING_FRAMES)
+            Reset();
+        break;
+    }
+
+    if (sChatPending && OverworldIsFree())
+    {
+        sChatPending = FALSE;
+        BuildChatText(sChatSlotShown);
+        ScriptContext_SetupScript(RemoteSocial_EventScript_ShowChat);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Specials called by the scripts. Results go to VAR_RESULT.
+// ---------------------------------------------------------------------------
+
+// Who was talked to, and is anything else going on.
+void RemoteSocial_Prepare(void)
+{
+    u8 slot = gSpecialVar_LastTalked - REMOTE_LOCAL_ID;
+    const u8 *name;
+
+    gSpecialVar_Result = 0;
+    if (slot >= REMOTE_MAX_PLAYERS)
+        return;
+    sPeer = slot;
+    name = RemoteBattle_GetNameOfSlot(slot);
+    StringCopy(gStringVar1, name != NULL ? name : gText_Friend);
+    // 1: free, 2: busy, 3: the other player's team has not arrived yet
+    if (sState != ST_IDLE)
+        gSpecialVar_Result = 2;
+    else if (name == NULL)
+        gSpecialVar_Result = 3;
+    else
+        gSpecialVar_Result = 1;
+}
+
+void RemoteSocial_SendRequest(void)
+{
+    sKind = gSpecialVar_0x8004;
+    sSessionCounter++;
+    if (sSessionCounter == 0)
+        sSessionCounter = 1;
+    sSession = sSessionCounter;
+    sReplyResult = 0;
+    sTimer = 0;
+    sIsRequester = TRUE;
+    sState = ST_REQUESTING;
+    ClearTrade();
+    Send(SUB_REQUEST, sKind, sSession, NULL);
+}
+
+static void Task_WaitReply(u8 taskId)
+{
+    if (JOY_NEW(B_BUTTON) && sReplyResult == 0)
+    {
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Reset();
+        gSpecialVar_Result = 4;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+        return;
+    }
+    if (sReplyResult != 0)
+    {
+        gSpecialVar_Result = sReplyResult;
+        if (sReplyResult == 1)
+        {
+            sState = ST_AGREED;
+            sTimer = 0;
+            if (sKind == SOCIAL_REQUEST_BATTLE)
+                sBattleReady = TRUE;
+        }
+        else
+        {
+            Reset();
+        }
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+}
+
+void RemoteSocial_WaitReply(void)
+{
+    CreateTask(Task_WaitReply, 80);
+}
+
+// The other player asked: names and what they want.
+void RemoteSocial_PrepareIncoming(void)
+{
+    const u8 *name = RemoteBattle_GetNameOfSlot(sPeer);
+
+    StringCopy(gStringVar1, name != NULL ? name : gText_Friend);
+    gSpecialVar_0x8004 = sKind;
+}
+
+// 0x8005: 1 = yes.
+void RemoteSocial_Answer(void)
+{
+    sIsRequester = FALSE;
+    sReplyValue = gSpecialVar_0x8005 != 0;
+    sReplyRepeats = REPLY_REPEATS;
+    Send(SUB_REPLY, sReplyValue, sSession, NULL);
+    if (sReplyValue)
+    {
+        sState = ST_AGREED;
+        sTimer = 0;
+        if (sKind == SOCIAL_REQUEST_BATTLE)
+            sBattleReady = TRUE;
+    }
+    else
+    {
+        Reset();
+    }
+}
+
+bool8 RemoteSocial_TakeBattleRequest(u8 *slot, bool8 *isRequester, u8 *session)
+{
+    if (!sBattleReady)
+        return FALSE;
+    sBattleReady = FALSE;
+    *slot = sPeer;
+    *session = sSession;
+    *isRequester = sIsRequester;
+    return TRUE;
+}
+
+// What was agreed: 1 battle, 2 trade.
+void RemoteSocial_GetAgreedKind(void)
+{
+    gSpecialVar_Result = sKind;
+}
+
+// Both agreed to battle: hand over to the battle module. Reaches the script's
+// waitstate only when the battle could not start.
+void RemoteSocial_StartBattle(void)
+{
+    u8 slot;
+    bool8 requester;
+    u8 session;
+
+    if (RemoteSocial_TakeBattleRequest(&slot, &requester, &session) && RemoteBattle_BeginVersus(slot, requester, session))
+    {
+        Reset();
+        return;
+    }
+    Reset();
+    ScriptContext_Enable();
+}
+
+// ---- Trade -----------------------------------------------------------------
+
+// 0x8004: party slot chosen (0xFF = none).
+void RemoteSocial_OfferMon(void)
+{
+    u8 slot = gSpecialVar_0x8004;
+
+    gSpecialVar_Result = FALSE;
+    if (slot >= PARTY_SIZE || GetMonData(&gPlayerParty[slot], MON_DATA_SPECIES) == SPECIES_NONE)
+    {
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Reset();
+        return;
+    }
+    sOfferSlot = slot;
+    sOffer = gPlayerParty[slot];
+    sCursor = 0;
+    sPhase = PHASE_OFFERED;
+    gSpecialVar_Result = TRUE;
+}
+
+static void Task_WaitOffer(u8 taskId)
+{
+    if (sCancelled || (JOY_NEW(B_BUTTON) && !sHaveTheirs))
+    {
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Reset();
+        gSpecialVar_Result = 0;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+    else if (sHaveTheirs)
+    {
+        GetSpeciesName(gStringVar2, GetMonData(&sTheirs, MON_DATA_SPECIES));
+        ConvertIntToDecimalStringN(gStringVar3, GetMonData(&sTheirs, MON_DATA_LEVEL), STR_CONV_MODE_LEFT_ALIGN, 3);
+        gSpecialVar_Result = 1;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+}
+
+void RemoteSocial_WaitOffer(void)
+{
+    CreateTask(Task_WaitOffer, 80);
+}
+
+// 0x8005: 1 = I accept.
+void RemoteSocial_Confirm(void)
+{
+    if (gSpecialVar_0x8005 != 0)
+    {
+        sPhase = PHASE_CONFIRMED;
+        Send(SUB_OK, 0, sSession, NULL);
+    }
+    else
+    {
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Reset();
+    }
+}
+
+static void Task_WaitConfirm(u8 taskId)
+{
+    if (sCancelled || sState == ST_IDLE)
+    {
+        Reset();
+        gSpecialVar_Result = 0;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+    else if (sTheirOk)
+    {
+        gSpecialVar_Result = 1;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+}
+
+void RemoteSocial_WaitConfirm(void)
+{
+    CreateTask(Task_WaitConfirm, 80);
+}
+
+// Both accepted: swap. The Pokémon in the slot must still be the one offered.
+void RemoteSocial_FinishTrade(void)
+{
+    struct Pokemon *mon = &gPlayerParty[sOfferSlot];
+    u16 species;
+    u32 personality;
+
+    gSpecialVar_Result = FALSE;
+    if (!sHaveTheirs
+     || GetMonData(mon, MON_DATA_PERSONALITY) != GetMonData(&sOffer, MON_DATA_PERSONALITY)
+     || GetMonData(mon, MON_DATA_OT_ID) != GetMonData(&sOffer, MON_DATA_OT_ID))
+    {
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Reset();
+        return;
+    }
+
+    *mon = sTheirs;
+    species = GetMonData(mon, MON_DATA_SPECIES);
+    personality = GetMonData(mon, MON_DATA_PERSONALITY);
+    GetSetPokedexFlag(SpeciesToNationalPokedexNum(species), FLAG_SET_SEEN);
+    HandleSetPokedexFlag(SpeciesToNationalPokedexNum(species), FLAG_SET_CAUGHT, personality);
+    GetSpeciesName(gStringVar2, species);
+    CalculatePlayerPartyCount();
+
+    sState = ST_CLOSING;
+    sTimer = 0;
+    sPhase = PHASE_CONFIRMED;
+    gSpecialVar_Result = TRUE;
+}
+
+// ---- Chat ------------------------------------------------------------------
+
+void RemoteSocial_ComposeChat(void)
+{
+    u8 i;
+
+    for (i = 0; i < CHAT_WORDS; i++)
+        sChatOut[i] = EC_EMPTY_WORD;
+    CleanupOverworldWindowsAndTilemaps();
+    DoEasyChatScreen(EASY_CHAT_TYPE_MAIL, sChatOut, CB2_ReturnToFieldContinueScript, EASY_CHAT_PERSON_DISPLAY_NONE);
+}
+
+// After the screen: send what was written, if anything.
+void RemoteSocial_SendChat(void)
+{
+    u8 i;
+    bool8 any = FALSE;
+
+    for (i = 0; i < CHAT_WORDS; i++)
+    {
+        if (sChatOut[i] != EC_EMPTY_WORD)
+            any = TRUE;
+    }
+    gSpecialVar_Result = any;
+    if (!any)
+        return;
+    sChatNumber++;
+    if (sChatNumber == 0)
+        sChatNumber = 1;
+    SendChatParts();
+    sChatRepeatsLeft = CHAT_REPEATS;
+}

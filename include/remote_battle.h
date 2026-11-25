@@ -58,6 +58,8 @@ bool8 RemoteBattle_AwaitingStartAck(void);
 void RemoteBattle_BattleTick(void);
 void RemoteBattle_ApplySeed(void);
 bool8 RemoteBattle_IsGuest(void);
+// A versus battle against the person in a slot, agreed in the overworld.
+bool8 RemoteBattle_BeginVersus(u8 slot, bool8 requester, u8 session);
 // The player's own battle menu: a menu entry the rules take away.
 bool8 RemoteBattle_BlockAction(u8 cursor);
 void RemoteBattle_ClearItemEffect(void);
@@ -75,6 +77,7 @@ void RemoteBattle_GiveUpOnRemote(void);
 
 // Strings and picture for the partner in battle.
 const u8 *RemoteBattle_GetPartnerName(void);
+const u8 *RemoteBattle_GetNameOfSlot(u8 slot);
 u8 RemoteBattle_GetPartnerBackPic(void);
 
 #endif // GUARD_REMOTE_BATTLE_H

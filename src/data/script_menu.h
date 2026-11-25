@@ -782,6 +782,19 @@ struct MultichoiceListStruct
     u8 count;
 };
 
+static const u8 sText_RemoteBattle[] = _("Battle");
+static const u8 sText_RemoteTrade[] = _("Trade");
+static const u8 sText_RemoteChat[] = _("Chat");
+static const u8 sText_RemoteCancel[] = _("Cancel");
+
+static const struct MenuAction MultichoiceList_RemoteSocial[] =
+{
+    {sText_RemoteBattle},
+    {sText_RemoteTrade},
+    {sText_RemoteChat},
+    {sText_RemoteCancel},
+};
+
 static const struct MultichoiceListStruct sMultichoiceLists[] =
 {
     [MULTI_BRINEY_ON_DEWFORD]          = MULTICHOICE(MultichoiceList_BrineyOnDewford),
@@ -898,6 +911,7 @@ static const struct MultichoiceListStruct sMultichoiceLists[] =
     [MULTI_SLATEPORT_TENT_RULES]       = MULTICHOICE(MultichoiceList_SlateportTentRules),
     [MULTI_FALLARBOR_TENT_RULES]       = MULTICHOICE(MultichoiceList_FallarborTentRules),
     [MULTI_TAG_MATCH_TYPE]             = MULTICHOICE(MultichoiceList_TagMatchType),
+    [MULTI_REMOTE_SOCIAL]              = MULTICHOICE(MultichoiceList_RemoteSocial),
 };
 
 const u8 *const gStdStrings[] =

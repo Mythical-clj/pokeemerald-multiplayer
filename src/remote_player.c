@@ -8,6 +8,7 @@
 #include "remote_battle.h"
 #include "remote_player.h"
 #include "remote_sio.h"
+#include "remote_social.h"
 #include "sprite.h"
 #include "constants/event_object_movement.h"
 #include "constants/event_objects.h"
@@ -256,6 +257,7 @@ void RemotePlayer_Init(void)
         sSlots[i].qTail = 0;
     }
     RemoteBattle_Init();
+    RemoteSocial_Init();
     RemoteSio_Init();
     sRxHead = sRxTail = 0;
     sTxHead = sTxTail = 0;
@@ -886,6 +888,7 @@ void RemotePlayer_Tick(void)
 
     RemoteSio_Tick();
     RemoteBattle_Tick();
+    RemoteSocial_Tick();
 
 #if REMOTE_PLAYER_LOOPBACK
     sFrameCounter++;

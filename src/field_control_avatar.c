@@ -31,6 +31,8 @@
 #include "constants/event_bg.h"
 #include "constants/event_objects.h"
 #include "constants/field_poison.h"
+#include "remote_player.h"
+#include "remote_social.h"
 #include "constants/map_types.h"
 #include "constants/songs.h"
 #include "constants/trainer_hill.h"
@@ -280,6 +282,9 @@ const u8 *GetInteractedLinkPlayerScript(struct MapPosition *position, u8 metatil
     gSelectedObjectEvent = objectEventId;
     gSpecialVar_LastTalked = gObjectEvents[objectEventId].localId;
     gSpecialVar_Facing = direction;
+
+    if (IS_REMOTE_LOCAL_ID(gSpecialVar_LastTalked))
+        return RemoteSocial_EventScript_Interact;
     return GetObjectEventScriptPointerByObjectEventId(objectEventId);
 }
 

@@ -8,6 +8,7 @@
 #include "remote_battle.h"
 #include "remote_player.h"
 #include "remote_sio.h"
+#include "remote_social.h"
 #include "overworld.h"
 #include "field_player_avatar.h"
 #include "random.h"
@@ -604,6 +605,8 @@ void RemoteBattle_HandleRx(const struct RemoteEvent *event)
         HandleSyncMessage((const struct SyncMessage *)event);
     else if (kind == REMOTE_EVENT_BCHOICE)
         HandleChoiceMessage((const struct ChoiceMessage *)event);
+    else if (kind == REMOTE_EVENT_SOCIAL)
+        RemoteSocial_HandleRx(slot, event);
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,6 +1232,18 @@ finish:
         }
     }
     return gRemoteBattleActive;
+}
+
+bool8 RemoteBattle_BeginVersus(u8 slot, bool8 requester, u8 session)
+{
+    return FALSE;
+}
+
+const u8 *RemoteBattle_GetNameOfSlot(u8 slot)
+{
+    if (slot >= REMOTE_MAX_PLAYERS || !sPeers[slot].ready)
+        return NULL;
+    return sPeers[slot].name;
 }
 
 const u8 *RemoteBattle_GetPartnerName(void)
