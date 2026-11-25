@@ -30,7 +30,7 @@
 // so the module can be tested with no link hardware. Set to 0 when a
 // transport feeds RemotePlayer_PushRx.
 #ifndef REMOTE_PLAYER_LOOPBACK
-#define REMOTE_PLAYER_LOOPBACK 1
+#define REMOTE_PLAYER_LOOPBACK 0
 #endif
 
 struct RemoteEvent
