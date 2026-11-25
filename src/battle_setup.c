@@ -2,6 +2,7 @@
 #include "remote_battle.h"
 #include "battle.h"
 #include "battle_setup.h"
+#include "match_call.h"
 #include "battle_transition.h"
 #include "main.h"
 #include "task.h"
