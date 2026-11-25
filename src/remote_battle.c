@@ -334,6 +334,8 @@ static bool8 PushMessage(u8 kind, u8 b1, u8 b2, u8 b3, const u8 *data)
     bytes[5] = gSaveBlock1Ptr->location.mapNum;
     for (i = 0; i < 6; i++)
         bytes[6 + i] = data[i];
+    if (kind != REMOTE_EVENT_BPARTY)
+        return RemotePlayer_TryPushTxPriority(&event);
     return RemotePlayer_TryPushTx(&event);
 }
 
@@ -795,6 +797,8 @@ static void SendChoice(u8 n)
     PushMessage(REMOTE_EVENT_BCHOICE, n, 0, sSession, data);
 }
 
+static EWRAM_DATA u8 sStartSentParts = 0;
+
 static void SendStart(void)
 {
     u8 data[6];
@@ -805,7 +809,8 @@ static void SendStart(void)
     data[3] = sSeed >> 24;
     data[4] = sHostTag;
     data[5] = sGuestTag;
-    PushMessage(REMOTE_EVENT_BSTART, 0, 0, sSession, data);
+    if (!(sStartSentParts & 1) && PushMessage(REMOTE_EVENT_BSTART, 0, 0, sSession, data))
+        sStartSentParts |= 1;
 
     data[0] = sTrainerA & 0xFF;
     data[1] = sTrainerA >> 8;
@@ -813,7 +818,8 @@ static void SendStart(void)
     data[3] = sTrainerB >> 8;
     data[4] = sStartFlags;
     data[5] = 0;
-    PushMessage(REMOTE_EVENT_BSTART, 1, 0, sSession, data);
+    if (!(sStartSentParts & 2) && PushMessage(REMOTE_EVENT_BSTART, 1, 0, sSession, data))
+        sStartSentParts |= 2;
 }
 
 static void QueueOutgoing(u8 kind, u8 a, u8 b, u8 c, u8 d)
@@ -1058,6 +1064,8 @@ static void TickHostStart(void)
         return;
     }
     if (sStartWait % START_RESEND_FRAMES == 0)
+        sStartSentParts = 0;
+    if (sStartSentParts != 3)
         SendStart();
     if (++sStartWait >= START_TIMEOUT_FRAMES)
     {

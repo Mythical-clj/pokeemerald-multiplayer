@@ -199,6 +199,18 @@ bool8 RemotePlayer_PushRx(const struct RemoteEvent *event)
     return TRUE;
 }
 
+// For the messages a fight depends on: the ring may fill up completely, as
+// the team chunks (which repeat anyway) are what gives way to them.
+bool8 RemotePlayer_TryPushTxPriority(const struct RemoteEvent *event)
+{
+    u8 next = (sTxHead + 1) % RING_LEN;
+
+    if (next == sTxTail)
+        return FALSE;
+    RingPushTx((struct RemoteEvent *)event);
+    return TRUE;
+}
+
 bool8 RemotePlayer_TryPushTx(const struct RemoteEvent *event)
 {
     u8 used = (sTxHead + RING_LEN - sTxTail) % RING_LEN;

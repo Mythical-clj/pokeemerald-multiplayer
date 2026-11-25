@@ -61,6 +61,7 @@ bool8 RemotePlayer_PopTx(struct RemoteEvent *event);
 
 // Used by the battle module: a spare transmit slot, the next sequence number,
 // whether the ghost (no real peer) is standing in, and where the remotes are.
+bool8 RemotePlayer_TryPushTxPriority(const struct RemoteEvent *event);
 bool8 RemotePlayer_TryPushTx(const struct RemoteEvent *event);
 u8 RemotePlayer_NextTxSeq(void);
 bool8 RemotePlayer_InLoopback(void);
