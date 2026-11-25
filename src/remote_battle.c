@@ -537,6 +537,8 @@ static EWRAM_DATA u8 sLastSession = 0;
 // gives up its own start and takes part as the guest, inside the script it
 // is already running, so the trainer's dialogue and flags play out as usual.
 static EWRAM_DATA bool8 sYielded = FALSE;
+static EWRAM_DATA u32 sFlagsBefore = 0;
+static EWRAM_DATA u16 sTrainerBBefore = 0;
 static EWRAM_DATA bool8 sStartTimedOut = FALSE;
 static EWRAM_DATA bool8 sWaitShown = FALSE;
 static EWRAM_DATA bool8 sAwaitingNear = FALSE;
@@ -545,7 +547,7 @@ static EWRAM_DATA u16 sNearWait = 0;
 
 static const u8 sText_WaitingForPlayer[] = _("Waiting for the other player...");
 static const u8 sText_WaitingNear[] = _("Waiting for the other player\nto come closer...");
-static const u8 sText_NoReply[] = _("No reply. A computer partner\nwill take their place.");
+static const u8 sText_NoReply[] = _("No reply.\nStarting the battle alone.");
 
 // The message box of the field, as the link rooms use while they wait.
 void RemoteBattle_ShowWaiting(u8 which)
@@ -592,6 +594,20 @@ bool8 RemoteBattle_Yielded(void)
     return sYielded;
 }
 
+// Takes back what the host set up for a fight together.
+static void UndoHostSetup(void)
+{
+    LoadPlayerParty();
+    CalculatePlayerPartyCount();
+    sAwaitingAck = FALSE;
+    gRemoteBattleActive = FALSE;
+    gRemoteHumanBattle = FALSE;
+    gRemoteSplitTrainer = FALSE;
+    sRole = ROLE_NONE;
+    gBattleTypeFlags = sFlagsBefore;
+    gTrainerBattleOpponent_B = sTrainerBBefore;
+}
+
 static void HandleCompetingStart(u8 slot, const struct StartMessage *msg)
 {
     if (msg->session == 0 || slot != sPartnerSlot)
@@ -627,12 +643,7 @@ static void HandleCompetingStart(u8 slot, const struct StartMessage *msg)
         return;
 
     // Undo the host's setup and become the guest of the other game's battle.
-    LoadPlayerParty();
-    CalculatePlayerPartyCount();
-    sAwaitingAck = FALSE;
-    gRemoteBattleActive = FALSE;
-    gRemoteHumanBattle = FALSE;
-    sRole = ROLE_NONE;
+    UndoHostSetup();
     sYielded = TRUE;
 
     sSeed = sCompSeed;
@@ -1069,11 +1080,9 @@ static void TickHostStart(void)
         SendStart();
     if (++sStartWait >= START_TIMEOUT_FRAMES)
     {
-        // Nobody answered: the partner is played by the game.
+        // Nobody answered: the fight goes ahead alone.
         sStartTimedOut = TRUE;
-        sAwaitingAck = FALSE;
-        gRemoteHumanBattle = FALSE;
-        sRole = ROLE_NONE;
+        UndoHostSetup();
     }
 }
 
@@ -1083,8 +1092,9 @@ static bool8 GuestCanJoin(void)
 
     if (gMain.inBattle)
         return FALSE;
-    // A game that was already starting the same fight is inside a script.
-    if (!sYielded && (ArePlayerFieldControlsLocked() || ScriptContext_IsEnabled()))
+    // Only a game that went to the same trainer itself joins: someone who
+    // merely stands nearby is not pulled into the fight.
+    if (!sYielded)
         return FALSE;
     if (gPlayerAvatar.tileTransitionState != T_NOT_MOVING)
         return FALSE;
@@ -1356,19 +1366,6 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     sMoneyBefore = gSaveBlock1Ptr->money;
 
     sAwaitingNear = FALSE;
-    if (REMOTE_BATTLE_ENABLED && !sNearGaveUp && !FindPartner(&slot) && TrainerFitsPartnerBattle())
-    {
-        u8 other;
-        u8 otherGender;
-
-        // Someone is on this map but too far away: give them time to walk up.
-        if (RemotePlayer_FindNearby(60, &other, &otherGender) && sPeers[other].ready)
-        {
-            sAwaitingNear = TRUE;
-            sNearWait = 0;
-            return FALSE;
-        }
-    }
     sNearGaveUp = FALSE;
 
     if (!REMOTE_BATTLE_ENABLED || !FindPartner(&slot) || !TrainerFitsPartnerBattle())
@@ -1391,6 +1388,8 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     if (sPickCount == 0)
         goto finish;
 
+    sFlagsBefore = gBattleTypeFlags;
+    sTrainerBBefore = gTrainerBattleOpponent_B;
     if (!(gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS))
     {
         // One trainer plays both opponents.
