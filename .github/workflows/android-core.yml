@@ -22,7 +22,7 @@ jobs:
         run: |
           cmake -S mgba -B build \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
             -DCMAKE_BUILD_TYPE=Release -DOWL_MBEDTLS_DIR=$GITHUB_WORKSPACE/mbedtls \
             -DBUILD_LIBRETRO=ON -DSKIP_LIBRARY=ON \
             -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF \
@@ -40,7 +40,11 @@ jobs:
   host-smoke:
     # Builds the same patched core for the CI machine and runs the real ROM in it,
     # to catch crashes that would otherwise only show up on a phone.
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -78,6 +82,6 @@ jobs:
               wss_down) printf 'relay=wss://127.0.0.1:1/ws\nroom=1\npeer=1\n' > run_$scenario/owl.txt ;;
             esac
             echo "=== $scenario"
-            gdb -batch -ex run -ex bt --args ./host build/mgba_libretro.so "$rom" run_$scenario 600 2>&1 | tail -25
+            gdb -batch -ex run -ex bt --args ./host build/mgba_libretro.so "$rom" run_$scenario 3000 2>&1 | tail -25
             cat run_$scenario/owl_status.txt 2>/dev/null || true
           done
