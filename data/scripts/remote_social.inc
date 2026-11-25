@@ -12,6 +12,7 @@ RemoteSocial_EventScript_Interact::
 	case 0, RemoteSocial_EventScript_AskBattle
 	case 1, RemoteSocial_EventScript_AskTrade
 	case 2, RemoteSocial_EventScript_Chat
+	case 3, RemoteSocial_EventScript_AskMix
 	goto RemoteSocial_EventScript_Done
 	end
 
@@ -32,6 +33,11 @@ RemoteSocial_EventScript_NotReady::
 
 RemoteSocial_EventScript_AskBattle::
 	setvar VAR_0x8004, 1
+	goto RemoteSocial_EventScript_Ask
+	end
+
+RemoteSocial_EventScript_AskMix::
+	setvar VAR_0x8004, 3
 	goto RemoteSocial_EventScript_Ask
 	end
 
@@ -67,7 +73,28 @@ RemoteSocial_EventScript_NoAnswer::
 RemoteSocial_EventScript_Agreed::
 	special RemoteSocial_GetAgreedKind
 	goto_if_eq VAR_RESULT, 1, RemoteSocial_EventScript_BattleAgreed
+	goto_if_eq VAR_RESULT, 3, RemoteSocial_EventScript_MixAgreed
 	goto RemoteSocial_EventScript_TradeAgreed
+	end
+
+RemoteSocial_EventScript_MixAgreed::
+	message RemoteSocial_Text_Mixing
+	waitmessage
+	special RemoteSocial_StartMix
+	special RemoteSocial_WaitMix
+	closemessage
+	goto_if_eq VAR_RESULT, 0, RemoteSocial_EventScript_MixFailed
+	special RemoteSocial_FinishMix
+	goto_if_eq VAR_RESULT, FALSE, RemoteSocial_EventScript_MixFailed
+	playfanfare MUS_OBTAIN_ITEM
+	msgbox RemoteSocial_Text_MixDone, MSGBOX_DEFAULT
+	waitfanfare
+	goto RemoteSocial_EventScript_Done
+	end
+
+RemoteSocial_EventScript_MixFailed::
+	msgbox RemoteSocial_Text_MixFailed, MSGBOX_DEFAULT
+	goto RemoteSocial_EventScript_Done
 	end
 
 RemoteSocial_EventScript_BattleAgreed::
@@ -125,6 +152,7 @@ RemoteSocial_EventScript_Incoming::
 	lockall
 	special RemoteSocial_PrepareIncoming
 	goto_if_eq VAR_0x8004, 1, RemoteSocial_EventScript_IncomingBattle
+	goto_if_eq VAR_0x8004, 3, RemoteSocial_EventScript_IncomingMix
 	goto RemoteSocial_EventScript_IncomingTrade
 	end
 
@@ -133,6 +161,14 @@ RemoteSocial_EventScript_IncomingBattle::
 	copyvar VAR_0x8005, VAR_RESULT
 	special RemoteSocial_Answer
 	goto_if_eq VAR_0x8005, 1, RemoteSocial_EventScript_BattleAgreed
+	goto RemoteSocial_EventScript_Done
+	end
+
+RemoteSocial_EventScript_IncomingMix::
+	msgbox RemoteSocial_Text_WantsToMix, MSGBOX_YESNO
+	copyvar VAR_0x8005, VAR_RESULT
+	special RemoteSocial_Answer
+	goto_if_eq VAR_0x8005, 1, RemoteSocial_EventScript_MixAgreed
 	goto RemoteSocial_EventScript_Done
 	end
 
@@ -200,6 +236,20 @@ RemoteSocial_Text_TradeCancelled:
 RemoteSocial_Text_WantsToBattle:
 	.string "{STR_VAR_1} wants to battle!\n"
 	.string "Accept?$"
+
+RemoteSocial_Text_WantsToMix:
+	.string "{STR_VAR_1} wants to mix records\n"
+	.string "and share secret bases. Accept?$"
+
+RemoteSocial_Text_Mixing:
+	.string "Mixing records with {STR_VAR_1}…\n"
+	.string "Press B to cancel.$"
+
+RemoteSocial_Text_MixDone:
+	.string "The records were mixed!$"
+
+RemoteSocial_Text_MixFailed:
+	.string "The records could not be mixed.$"
 
 RemoteSocial_Text_WantsToTrade:
 	.string "{STR_VAR_1} wants to trade\n"

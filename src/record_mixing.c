@@ -1,4 +1,5 @@
 #include "global.h"
+#include "main.h"
 #include "malloc.h"
 #include "random.h"
 #include "constants/items.h"
@@ -1405,4 +1406,106 @@ static void SanitizeEmeraldBattleTowerRecord(struct EmeraldBattleTowerRecord *ds
     }
 
     CalcEmeraldBattleTowerChecksum(dst);
+}
+
+// ---------------------------------------------------------------------------
+// Overworld mixing with one other player. The same functions that handle a
+// Cable Club mix do the work; they are given a two-player record set and a
+// two-player link context for the duration of the call.
+// ---------------------------------------------------------------------------
+
+struct RemoteMixRecord
+{
+    struct SecretBase secretBase;
+    TVShow tvShows[TV_SHOWS_COUNT];
+    PokeNews pokeNews[POKE_NEWS_COUNT];
+    OldMan oldMan;
+    struct DewfordTrend dewfordTrends[SAVED_TRENDS_COUNT];
+    LilycoveLady lilycoveLady;
+};
+
+STATIC_ASSERT(sizeof(struct RemoteMixRecord) <= REMOTE_MIX_MAX_BYTES, RemoteMixRecordFits);
+
+u16 RemoteMix_GetSize(void)
+{
+    return sizeof(struct RemoteMixRecord);
+}
+
+void RemoteMix_Build(void *out)
+{
+    struct RemoteMixRecord *rec = out;
+
+    SetPlayerSecretBaseParty();
+    DeactivateAllNormalTVShows();
+    memset(rec, 0, sizeof(*rec));
+    memcpy(&rec->secretBase, &gSaveBlock1Ptr->secretBases[0], sizeof(rec->secretBase));
+    memcpy(rec->tvShows, gSaveBlock1Ptr->tvShows, sizeof(rec->tvShows));
+    memcpy(rec->pokeNews, gSaveBlock1Ptr->pokeNews, sizeof(rec->pokeNews));
+    memcpy(&rec->oldMan, &gSaveBlock1Ptr->oldMan, sizeof(rec->oldMan));
+    memcpy(rec->dewfordTrends, gSaveBlock1Ptr->dewfordTrends, sizeof(rec->dewfordTrends));
+    memcpy(&rec->lilycoveLady, &gSaveBlock1Ptr->lilycoveLady, sizeof(rec->lilycoveLady));
+}
+
+static void FillMixSlot(struct PlayerRecordEmerald *slot, const struct RemoteMixRecord *rec)
+{
+    slot->secretBases[0] = rec->secretBase;
+    memcpy(slot->tvShows, rec->tvShows, sizeof(slot->tvShows));
+    memcpy(slot->pokeNews, rec->pokeNews, sizeof(slot->pokeNews));
+    memcpy(&slot->oldMan, &rec->oldMan, sizeof(slot->oldMan));
+    memcpy(slot->dewfordTrends, rec->dewfordTrends, sizeof(slot->dewfordTrends));
+    memcpy(&slot->lilycoveLady, &rec->lilycoveLady, sizeof(slot->lilycoveLady));
+}
+
+bool8 RemoteMix_Apply(const void *theirs)
+{
+    struct PlayerRecordEmerald *records;
+    struct RemoteMixRecord *mine;
+    struct LinkPlayer savedPlayers[2];
+    u32 savedStatus;
+    size_t size = sizeof(struct PlayerRecordEmerald);
+    u8 i;
+
+    if (gWirelessCommType != 0)
+        return FALSE;
+    records = AllocZeroed(size * MAX_LINK_PLAYERS);
+    mine = Alloc(sizeof(*mine));
+    if (records == NULL || mine == NULL)
+    {
+        if (records != NULL)
+            Free(records);
+        if (mine != NULL)
+            Free(mine);
+        return FALSE;
+    }
+
+    // Slot 0 is this player, slot 1 the other one; the receive functions
+    // merge everything that is not slot 0's into the save.
+    SetSrcLookupPointers();
+    RemoteMix_Build(mine);
+    FillMixSlot(&records[0], mine);
+    FillMixSlot(&records[1], theirs);
+
+    savedStatus = gLinkStatus;
+    for (i = 0; i < 2; i++)
+        savedPlayers[i] = gLinkPlayers[i];
+    gLinkStatus = 2 << LINK_STAT_PLAYER_COUNT_SHIFT;
+    for (i = 0; i < 2; i++)
+    {
+        gLinkPlayers[i].version = VERSION_EMERALD;
+        gLinkPlayers[i].language = gGameLanguage;
+    }
+
+    ReceiveSecretBasesData(records[0].secretBases, size, 0);
+    ReceiveTvShowsData(records[0].tvShows, size, 0);
+    ReceivePokeNewsData(records[0].pokeNews, size, 0);
+    ReceiveOldManData(&records[0].oldMan, size, 0);
+    ReceiveDewfordTrendData(records[0].dewfordTrends, size, 0);
+    ReceiveLilycoveLadyData(&records[0].lilycoveLady, size, 0);
+
+    gLinkStatus = savedStatus;
+    for (i = 0; i < 2; i++)
+        gLinkPlayers[i] = savedPlayers[i];
+    Free(records);
+    Free(mine);
+    return TRUE;
 }

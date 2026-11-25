@@ -554,3 +554,6 @@ gSpecials::
 	def_special RemoteSocial_FinishTrade
 	def_special RemoteSocial_ComposeChat, waitstate=1
 	def_special RemoteSocial_SendChat
+	def_special RemoteSocial_StartMix
+	def_special RemoteSocial_WaitMix, waitstate=1
+	def_special RemoteSocial_FinishMix

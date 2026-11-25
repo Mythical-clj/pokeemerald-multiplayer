@@ -8,6 +8,7 @@
 #include "pokedex.h"
 #include "pokemon.h"
 #include "random.h"
+#include "record_mixing.h"
 #include "remote_battle.h"
 #include "remote_player.h"
 #include "remote_social.h"
@@ -28,7 +29,8 @@
 #define SUB_REPLY       3   // a = 1 yes / 0 no, b = session
 #define SUB_CHUNK       4   // a = index, b = session, data = 6 bytes of a Pokémon (index OFFER_CHUNKS: checksum)
 #define SUB_CANCEL      5   // b = session
-#define SUB_OK          6   // b = session: "I accept the trade"
+#define SUB_OK          6   // b = session: "I accept the trade" / "I have your records"
+#define SUB_MIXCHUNK    7   // a = index, b = session, data = 6 bytes of the record (index = chunk count: checksum)
 
 #define CHAT_WORDS          9
 #define CHAT_PARTS          3
@@ -38,6 +40,8 @@
 #define OFFER_CHUNKS    ((sizeof(struct Pokemon) + 5) / 6)
 #define OFFER_MESSAGES  (OFFER_CHUNKS + 1)
 #define OFFER_PERIOD    4
+#define MIX_PERIOD      2
+#define MIX_TIMEOUT_FRAMES      7200
 #define REQUEST_RESEND_FRAMES   20
 #define REQUEST_TIMEOUT_FRAMES  900     // the other player gets 15 s to answer
 #define INCOMING_TIMEOUT_FRAMES 1800    // a request nobody had time to read
@@ -101,6 +105,15 @@ static EWRAM_DATA u16 sTheirSum = 0;
 static EWRAM_DATA bool8 sHaveTheirs = FALSE;
 static EWRAM_DATA bool8 sTheirOk = FALSE;
 static EWRAM_DATA bool8 sCancelled = FALSE;
+
+static EWRAM_DATA u32 sMixOut[REMOTE_MIX_MAX_BYTES / 4] = {0};
+static EWRAM_DATA u32 sMixIn[REMOTE_MIX_MAX_BYTES / 4] = {0};
+static EWRAM_DATA u8 sMixGot[256] = {0};
+static EWRAM_DATA u16 sMixGotCount = 0;
+static EWRAM_DATA u16 sMixTheirSum = 0;
+static EWRAM_DATA u8 sMixCursor = 0;
+static EWRAM_DATA bool8 sMixSending = FALSE;
+static EWRAM_DATA bool8 sHaveMix = FALSE;
 
 static EWRAM_DATA struct ChatInbox sInbox[REMOTE_MAX_PLAYERS] = {{0}};
 static EWRAM_DATA u16 sChatOut[CHAT_WORDS] = {0};
@@ -205,10 +218,28 @@ static u16 Checksum(const u8 *bytes, u16 length)
     return sum;
 }
 
+static u8 MixChunks(void)
+{
+    return (RemoteMix_GetSize() + 5) / 6;
+}
+
+static void ClearMix(void)
+{
+    u16 i;
+
+    sMixSending = FALSE;
+    sHaveMix = FALSE;
+    sMixCursor = 0;
+    sMixGotCount = 0;
+    for (i = 0; i < 256; i++)
+        sMixGot[i] = FALSE;
+}
+
 static void ClearTrade(void)
 {
     u8 i;
 
+    ClearMix();
     sPhase = PHASE_NONE;
     sCursor = 0;
     sGotCount = 0;
@@ -294,6 +325,46 @@ static void StoreChunk(u8 index, const u8 *data)
     }
 }
 
+static void StoreMixChunk(u8 index, const u8 *data)
+{
+    u8 *dest = (u8 *)sMixIn;
+    u16 size = RemoteMix_GetSize();
+    u8 chunks = MixChunks();
+    u8 i;
+
+    if (index > chunks || sMixGot[index] || sHaveMix)
+        return;
+    if (index == chunks)
+    {
+        sMixTheirSum = data[0] | (data[1] << 8);
+    }
+    else
+    {
+        for (i = 0; i < 6; i++)
+        {
+            u16 at = index * 6 + i;
+
+            if (at < size)
+                dest[at] = data[i];
+        }
+    }
+    sMixGot[index] = TRUE;
+    sMixGotCount++;
+    if (sMixGotCount == chunks + 1)
+    {
+        if (Checksum(dest, size) == sMixTheirSum)
+        {
+            sHaveMix = TRUE;
+        }
+        else
+        {
+            sMixGotCount = 0;
+            for (i = 0; i <= chunks; i++)
+                sMixGot[i] = FALSE;
+        }
+    }
+}
+
 void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
 {
     const u8 *m = (const u8 *)event;
@@ -343,6 +414,10 @@ void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
     case SUB_CHUNK:
         if (sState == ST_AGREED && b == sSession && slot == sPeer && sKind == SOCIAL_REQUEST_TRADE)
             StoreChunk(a, data);
+        break;
+    case SUB_MIXCHUNK:
+        if (sState == ST_AGREED && b == sSession && slot == sPeer && sKind == SOCIAL_REQUEST_MIX)
+            StoreMixChunk(a, data);
         break;
     case SUB_CANCEL:
         if (b == sSession && slot == sPeer && sState != ST_IDLE)
@@ -477,6 +552,41 @@ void RemoteSocial_Tick(void)
             if (sPhase == PHASE_CONFIRMED && sFrame % REPLY_REPEAT_FRAMES == 0)
                 Send(SUB_OK, 0, sSession, NULL);
             if (sTimer >= TRADE_TIMEOUT_FRAMES)
+                sCancelled = TRUE;
+        }
+        else if (sKind == SOCIAL_REQUEST_MIX)
+        {
+            if (sMixSending && sFrame % MIX_PERIOD == 0)
+            {
+                u8 data[6];
+                u8 i;
+                u8 chunks = MixChunks();
+
+                if (sMixCursor == chunks)
+                {
+                    u16 sum = Checksum((u8 *)sMixOut, RemoteMix_GetSize());
+
+                    data[0] = sum & 0xFF;
+                    data[1] = sum >> 8;
+                    for (i = 2; i < 6; i++)
+                        data[i] = 0;
+                }
+                else
+                {
+                    for (i = 0; i < 6; i++)
+                    {
+                        u16 at = sMixCursor * 6 + i;
+
+                        data[i] = at < RemoteMix_GetSize() ? ((u8 *)sMixOut)[at] : 0;
+                    }
+                }
+                if (Send(SUB_MIXCHUNK, sMixCursor, sSession, data))
+                    sMixCursor = (sMixCursor + 1) % (chunks + 1);
+            }
+            // "I have yours": the other side stops sending when it hears this.
+            if (sHaveMix && sFrame % REPLY_REPEAT_FRAMES == 0)
+                Send(SUB_OK, 0, sSession, NULL);
+            if (sTimer >= MIX_TIMEOUT_FRAMES)
                 sCancelled = TRUE;
         }
         break;
@@ -752,6 +862,55 @@ void RemoteSocial_FinishTrade(void)
     sTimer = 0;
     sPhase = PHASE_CONFIRMED;
     gSpecialVar_Result = TRUE;
+}
+
+// ---- Record mixing --------------------------------------------------------
+
+void RemoteSocial_StartMix(void)
+{
+    RemoteMix_Build(sMixOut);
+    sMixCursor = 0;
+    sMixSending = TRUE;
+    sTimer = 0;
+    StringCopy(gStringVar1, RemoteBattle_GetNameOfSlot(sPeer) != NULL ? RemoteBattle_GetNameOfSlot(sPeer) : gText_Friend);
+}
+
+static void Task_WaitMix(u8 taskId)
+{
+    if (sCancelled || sState == ST_IDLE || (JOY_NEW(B_BUTTON) && !sTheirOk))
+    {
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Reset();
+        gSpecialVar_Result = 0;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+    else if (sHaveMix && sTheirOk)
+    {
+        gSpecialVar_Result = 1;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+}
+
+void RemoteSocial_WaitMix(void)
+{
+    CreateTask(Task_WaitMix, 80);
+}
+
+// Both sides have both records: mix them, then keep acknowledging for a while.
+void RemoteSocial_FinishMix(void)
+{
+    gSpecialVar_Result = sHaveMix && RemoteMix_Apply(sMixIn);
+    if (!gSpecialVar_Result)
+    {
+        Send(SUB_CANCEL, 0, sSession, NULL);
+        Reset();
+        return;
+    }
+    sMixSending = FALSE;
+    sState = ST_CLOSING;
+    sTimer = 0;
 }
 
 // ---- Chat ------------------------------------------------------------------

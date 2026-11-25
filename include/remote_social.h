@@ -10,6 +10,7 @@
 
 #define SOCIAL_REQUEST_BATTLE   1
 #define SOCIAL_REQUEST_TRADE    2
+#define SOCIAL_REQUEST_MIX      3
 
 struct RemoteEvent;
 
