@@ -9,6 +9,7 @@
 #include "remote_player.h"
 #include "string_util.h"
 #include "constants/battle.h"
+#include "constants/characters.h"
 #include "constants/pokemon.h"
 #include "constants/species.h"
 #include "constants/trainers.h"
