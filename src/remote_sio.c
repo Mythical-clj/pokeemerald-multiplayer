@@ -9,7 +9,11 @@
 #define SIO_TYPE_EVENT      0x01    // from the adapter: the sender slot is already stamped
 #define SIO_TYPE_CABLE      0x02    // from a console on the cable: the receiver stamps the slot
 #define SIO_LANES           4
-#define CABLE_TIMER_RELOAD  (-197)  // 64 cycles each: the master waits about 0.75 ms between exchanges
+// 64 cycles each: the master waits about 3.9 ms after an exchange before the
+// next one. A slave that runs its serial interrupt late (the VBlank handler can
+// hold it up for a couple of milliseconds) would otherwise send a word twice
+// or miss one, and every frame it takes part in would fail its checksum.
+#define CABLE_TIMER_RELOAD  (-1024)
 #define SIO_MAX_WORDS       8
 #define EVENT_WORDS         (sizeof(struct RemoteEvent) / 2)
 

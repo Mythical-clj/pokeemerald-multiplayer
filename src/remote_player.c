@@ -1,4 +1,5 @@
 #include "global.h"
+#include "overworld.h"
 #include "event_object_movement.h"
 #include "field_effect.h"
 #include "field_effect_helpers.h"
