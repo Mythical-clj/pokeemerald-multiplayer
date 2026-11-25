@@ -32,8 +32,9 @@ static void CB2_RemoteBattleDone(void);
 // because the sync project's relay and client look there.
 // ---------------------------------------------------------------------------
 
-#define TEAM_SIZE           3
-#define TEAM_BYTES          (TEAM_SIZE * sizeof(struct Pokemon))   // 300
+#define TEAM_SIZE           3       // co-op: each player brings three
+#define SEND_SIZE           4       // what is sent: versus doubles uses four
+#define TEAM_BYTES          (SEND_SIZE * sizeof(struct Pokemon))   // 400
 #define NAME_BYTES          8
 #define PAYLOAD_BYTES       (TEAM_BYTES + NAME_BYTES)
 #define CHUNK_BYTES         6
@@ -143,7 +144,7 @@ struct PeerTeam
     u8 readyTag;
     u8 gender;
     u8 name[NAME_BYTES];
-    struct Pokemon mons[TEAM_SIZE];
+    struct Pokemon mons[SEND_SIZE];
 };
 
 struct PendingAward
@@ -171,10 +172,10 @@ EWRAM_DATA bool8 gRemoteVersus = FALSE;
 static EWRAM_DATA struct PeerTeam sPeers[REMOTE_MAX_PLAYERS] = {0};
 
 // What the local player sends.
-static EWRAM_DATA struct Pokemon sSendMons[TEAM_SIZE] = {0};
+static EWRAM_DATA struct Pokemon sSendMons[SEND_SIZE] = {0};
 static EWRAM_DATA u8 sSendName[NAME_BYTES] = {0};
 static EWRAM_DATA u8 sSendTag = 0;
-static EWRAM_DATA u8 sSendPick[TEAM_SIZE] = {0};
+static EWRAM_DATA u8 sSendPick[SEND_SIZE] = {0};
 static EWRAM_DATA u8 sSendCount = 0;
 static EWRAM_DATA bool8 sSendValid = FALSE;
 static EWRAM_DATA u8 sSendCursor = 0;
@@ -191,11 +192,11 @@ static EWRAM_DATA u8 sLockedSlot = REMOTE_MAX_PLAYERS;
 static EWRAM_DATA u32 sMoneyBefore = 0;
 static EWRAM_DATA bool8 sWrapped = FALSE;
 static EWRAM_DATA MainCallback sRealCallback = NULL;
-static EWRAM_DATA u8 sPick[TEAM_SIZE] = {0};
+static EWRAM_DATA u8 sPick[SEND_SIZE] = {0};
 static EWRAM_DATA u8 sPickCount = 0;
 static EWRAM_DATA u32 sExpBefore[TEAM_SIZE] = {0};
 static EWRAM_DATA u8 sPartnerGender = MALE;
-static EWRAM_DATA struct Pokemon sVersusEnemy[TEAM_SIZE] = {{0}};
+static EWRAM_DATA struct Pokemon sVersusEnemy[SEND_SIZE] = {{0}};
 static EWRAM_DATA u8 sPartnerName[NAME_BYTES + 1] = {0};
 static EWRAM_DATA struct Pokemon sBattleParty[PARTY_SIZE] = {0};
 
@@ -250,18 +251,23 @@ static bool8 IsUsable(struct Pokemon *mon)
         && GetMonData(mon, MON_DATA_HP) != 0;
 }
 
-// Picks the first usable Pokémon, up to three, in party order.
-static u8 BuildMyTeam(u8 *pick)
+// Picks the first usable Pokémon, up to max, in party order.
+static u8 BuildTeamOf(u8 *pick, u8 max)
 {
     u8 count = 0;
     u8 i;
 
-    for (i = 0; i < PARTY_SIZE && count < TEAM_SIZE; i++)
+    for (i = 0; i < PARTY_SIZE && count < max; i++)
     {
         if (IsUsable(&gPlayerParty[i]))
             pick[count++] = i;
     }
     return count;
+}
+
+static u8 BuildMyTeam(u8 *pick)
+{
+    return BuildTeamOf(pick, TEAM_SIZE);
 }
 
 static u8 SendByte(u16 offset)
@@ -275,12 +281,12 @@ static u8 SendByte(u16 offset)
 
 static void RefreshSendBuffer(void)
 {
-    u8 pick[TEAM_SIZE];
-    u8 count = BuildMyTeam(pick);
+    u8 pick[SEND_SIZE];
+    u8 count = BuildTeamOf(pick, SEND_SIZE);
     u16 i;
     u8 tag = 0;
 
-    for (i = 0; i < TEAM_SIZE; i++)
+    for (i = 0; i < SEND_SIZE; i++)
     {
         if (i < count)
             sSendMons[i] = gPlayerParty[pick[i]];
@@ -416,7 +422,7 @@ static void CompleteTeam(struct PeerTeam *peer)
     peer->name[NAME_BYTES - 1] = EOS;
 
     // Anything that does not look like a Pokémon is dropped.
-    for (i = 0; i < TEAM_SIZE; i++)
+    for (i = 0; i < SEND_SIZE; i++)
     {
         struct Pokemon *mon = &peer->mons[i];
 
@@ -709,18 +715,18 @@ static void QueueOutgoing(u8 kind, u8 a, u8 b, u8 c, u8 d)
 // Versus: each game plays its own player as battler 0 against the other's
 // team on battler 1, so the one who asked and the one who was asked see the
 // same kind of battle. The guest's engine is the mirror image of the host's.
-static u8 LocalBattler(void)
+static bool8 IsLocalBattler(u8 battler)
 {
     if (gRemoteVersus)
-        return 0;
-    return sRole == ROLE_GUEST ? 2 : 0;
+        return !(battler & 1);      // doubles: 0 and 2 are mine, 1 and 3 theirs
+    return battler == (sRole == ROLE_GUEST ? 2 : 0);
 }
 
-static u8 RemoteBattler(void)
+static bool8 IsRemoteBattler(u8 battler)
 {
     if (gRemoteVersus)
-        return 1;
-    return sRole == ROLE_GUEST ? 0 : 2;
+        return battler & 1;
+    return battler == (sRole == ROLE_GUEST ? 0 : 2);
 }
 
 bool8 RemoteBattle_IsGuest(void)
@@ -747,7 +753,7 @@ bool8 RemoteBattle_TieRoll(void)
 
 bool8 RemoteBattle_ControlsBattler(u8 battler)
 {
-    return gRemoteHumanBattle && !sRemoteAI && battler == RemoteBattler();
+    return gRemoteHumanBattle && !sRemoteAI && IsRemoteBattler(battler);
 }
 
 // Nothing is blocked any more: the guest's party menu is laid out from the
@@ -793,7 +799,7 @@ void RemoteBattle_ApplyItemEffect(u8 battler, u16 item, u8 partyPlus1, u8 moveIn
 
 void RemoteBattle_CaptureTwoReturn(u8 battler, u8 ret8, u16 ret16)
 {
-    if (!gRemoteHumanBattle || sRemoteAI || battler != LocalBattler())
+    if (!gRemoteHumanBattle || sRemoteAI || !IsLocalBattler(battler))
         return;
     switch (ret8)
     {
@@ -810,7 +816,7 @@ void RemoteBattle_CaptureTwoReturn(u8 battler, u8 ret8, u16 ret16)
 
 void RemoteBattle_CaptureChosenMon(u8 battler, u8 partyId, const u8 *order)
 {
-    if (!gRemoteHumanBattle || sRemoteAI || battler != LocalBattler())
+    if (!gRemoteHumanBattle || sRemoteAI || !IsLocalBattler(battler))
         return;
     if (order != NULL)
         QueueOutgoing(CHOICE_MON, partyId, order[0], order[1], order[2]);
@@ -820,7 +826,7 @@ void RemoteBattle_CaptureChosenMon(u8 battler, u8 partyId, const u8 *order)
 
 void RemoteBattle_CaptureOne(u8 battler, u16 ret)
 {
-    if (!gRemoteHumanBattle || sRemoteAI || battler != LocalBattler())
+    if (!gRemoteHumanBattle || sRemoteAI || !IsLocalBattler(battler))
         return;
     if (ret == 0)
         RemoteBattle_ClearItemEffect();
@@ -861,7 +867,7 @@ void RemoteBattle_BattleTick(void)
 
     sBattleFrame++;
     if (gBattleResults.battleTurnCounter != sLastTurnSeen
-     && (gBattlersCount == MAX_BATTLERS_COUNT || (gRemoteVersus && gBattlersCount >= 2)))
+     && gBattlersCount == MAX_BATTLERS_COUNT)
     {
         u16 hash = gBattleResults.battleTurnCounter;
         u8 i;
@@ -975,7 +981,7 @@ static void StartGuestBattle(void)
         gPlayerParty[TEAM_SIZE + i] = sSendMons[i];
     }
     CalculatePlayerPartyCount();
-    sPickCount = sSendCount;
+    sPickCount = sSendCount > TEAM_SIZE ? TEAM_SIZE : sSendCount;
     for (i = 0; i < TEAM_SIZE; i++)
         sPick[i] = sSendPick[i];
 
@@ -1193,7 +1199,7 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     human = !RemotePlayer_InLoopback() && sSendValid && peer->readyTag != 0;
     if (human)
     {
-        sPickCount = sSendCount;
+        sPickCount = sSendCount > TEAM_SIZE ? TEAM_SIZE : sSendCount;
         for (i = 0; i < TEAM_SIZE; i++)
             sPick[i] = sSendPick[i];
     }
@@ -1291,7 +1297,7 @@ void RemoteBattle_FillVersusParty(void)
     u8 i;
 
     ZeroEnemyPartyMons();
-    for (i = 0; i < TEAM_SIZE; i++)
+    for (i = 0; i < SEND_SIZE; i++)
         gEnemyParty[i] = sVersusEnemy[i];
 }
 
@@ -1325,7 +1331,7 @@ bool8 RemoteBattle_BeginVersus(const struct VersusRequest *request)
      || sSendTag != request->myTag || peer->readyTag != request->peerTag)
         return FALSE;
 
-    for (i = 0; i < TEAM_SIZE; i++)
+    for (i = 0; i < SEND_SIZE; i++)
         sVersusEnemy[i] = peer->mons[i];
     for (i = 0; i < NAME_BYTES; i++)
         sPartnerName[i] = peer->name[i];
@@ -1336,7 +1342,7 @@ bool8 RemoteBattle_BeginVersus(const struct VersusRequest *request)
     SavePlayerParty();
     for (i = 0; i < PARTY_SIZE; i++)
         ZeroMonData(&gPlayerParty[i]);
-    for (i = 0; i < TEAM_SIZE; i++)
+    for (i = 0; i < SEND_SIZE; i++)
         gPlayerParty[i] = sSendMons[i];
     CalculatePlayerPartyCount();
 
@@ -1354,7 +1360,7 @@ bool8 RemoteBattle_BeginVersus(const struct VersusRequest *request)
 
     gTrainerBattleOpponent_A = TRAINER_SAWYER_1;
     gTrainerBattleOpponent_B = 0;
-    gBattleTypeFlags = BATTLE_TYPE_TRAINER;
+    gBattleTypeFlags = BATTLE_TYPE_TRAINER | BATTLE_TYPE_DOUBLE;
     gMain.savedCallback = CB2_VersusDone;
     LockPlayerFieldControls();
     ScriptContext_Stop();
