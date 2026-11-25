@@ -9,8 +9,10 @@ RemoteSocial_EventScript_Interact::
 	waitmessage
 	multichoice 0, 0, MULTI_REMOTE_SOCIAL, FALSE
 	switch VAR_RESULT
-	case 0, RemoteSocial_EventScript_AskBattle
-	case 1, RemoteSocial_EventScript_Mail
+	case 0, RemoteSocial_EventScript_Mail
+	case 1, RemoteSocial_EventScript_AskTrade
+	case 2, RemoteSocial_EventScript_AskBattle
+	case 3, RemoteSocial_EventScript_AskMix
 	goto RemoteSocial_EventScript_Done
 	end
 
