@@ -1525,6 +1525,8 @@ static void PlayerPartnerWaitForRemote(void)
             BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, choice.a, order);
             break;
         default:
+            if (choice.c != 0)
+                RemoteBattle_ApplyItemEffect(gActiveBattler, choice.a | (choice.b << 8), choice.c, choice.d);
             BtlController_EmitOneReturnValue(B_COMM_TO_ENGINE, choice.a | (choice.b << 8));
             break;
         }
@@ -1585,6 +1587,8 @@ static void PlayerPartnerHandleChooseMove(void)
 
 static void PlayerPartnerHandleChooseItem(void)
 {
+    if (WaitForRemoteChoice())
+        return;
     PlayerPartnerBufferExecCompleted();
 }
 

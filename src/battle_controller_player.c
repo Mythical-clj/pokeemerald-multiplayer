@@ -2660,6 +2660,7 @@ static void PlayerHandleChooseItem(void)
 {
     s32 i;
 
+    RemoteBattle_ClearItemEffect();
     BeginNormalPaletteFade(PALETTES_ALL, 0, 0, 0x10, RGB_BLACK);
     gBattlerControllerFuncs[gActiveBattler] = OpenBagAndChooseItem;
     gBattlerInMenuId = gActiveBattler;
@@ -2674,28 +2675,6 @@ static void PlayerHandleChoosePokemon(void)
 
     for (i = 0; i < (int)ARRAY_COUNT(gBattlePartyCurrentOrder); i++)
         gBattlePartyCurrentOrder[i] = gBattleBufferA[gActiveBattler][4 + i];
-
-    if (RemoteBattle_IsGuest())
-    {
-        // The guest's Pokémon sit in the back half of the party, which the
-        // party menu does not offer: the next one that can fight goes in.
-        s32 chosen;
-
-        for (chosen = PARTY_SIZE / 2; chosen < PARTY_SIZE; chosen++)
-        {
-            if (GetMonData(&gPlayerParty[chosen], MON_DATA_SPECIES) != SPECIES_NONE
-                && !GetMonData(&gPlayerParty[chosen], MON_DATA_IS_EGG)
-                && GetMonData(&gPlayerParty[chosen], MON_DATA_HP) != 0
-                && chosen != gBattlerPartyIndexes[GetBattlerAtPosition(B_POSITION_PLAYER_LEFT)]
-                && chosen != gBattlerPartyIndexes[GetBattlerAtPosition(B_POSITION_PLAYER_RIGHT)])
-                break;
-        }
-        if (chosen < PARTY_SIZE)
-            *(gBattleStruct->monToSwitchIntoId + gActiveBattler) = chosen;
-        BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, chosen, gBattlePartyCurrentOrder);
-        PlayerBufferExecCompleted();
-        return;
-    }
 
     if (gBattleTypeFlags & BATTLE_TYPE_ARENA && (gBattleBufferA[gActiveBattler][1] & 0xF) != PARTY_ACTION_CANT_SWITCH)
     {

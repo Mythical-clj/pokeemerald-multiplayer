@@ -52,7 +52,7 @@ static void CB2_RemoteBattleDone(void);
 #define START_TIMEOUT_FRAMES    150
 #define GUEST_ACCEPT_FRAMES     24      // acks sent before the guest's battle starts
 #define GUEST_PENDING_FRAMES    100     // how long the guest waits for a moment to join
-#define REMOTE_WAIT_FRAMES      1200    // contact lost: the remote battler plays itself
+#define REMOTE_WAIT_FRAMES      3600    // contact lost: the remote battler plays itself
 
 #define ROLE_NONE   0
 #define ROLE_HOST   1
@@ -719,15 +719,44 @@ bool8 RemoteBattle_ControlsBattler(u8 battler)
     return gRemoteHumanBattle && !sRemoteAI && battler == RemoteBattler();
 }
 
-// The bag would spend items the other game does not know about, and the
-// guest's party menu would show the wrong half of the party.
+// Nothing is blocked any more: the guest's party menu is laid out from the
+// guest's own flank, and item effects are relayed (see below).
 bool8 RemoteBattle_BlockAction(u8 cursor)
 {
-    if (!gRemoteHumanBattle)
-        return FALSE;
-    if (cursor == 1)
-        return TRUE;
-    return cursor == 2 && sRole == ROLE_GUEST;
+    return FALSE;
+}
+
+// An item used from the bag changes the user's party in the menu itself. The
+// other game never sees that menu, so what the item did is sent along with
+// the item and applied there too (the bag count stays with the user).
+static EWRAM_DATA u8 sItemParty = 0;    // party id + 1, 0 when nothing was applied
+static EWRAM_DATA u8 sItemMove = 0;
+
+void RemoteBattle_ClearItemEffect(void)
+{
+    sItemParty = 0;
+    sItemMove = 0;
+}
+
+void RemoteBattle_NoteItemEffect(u8 partyId, u8 moveIndex)
+{
+    if (!gRemoteHumanBattle || !gMain.inBattle)
+        return;
+    sItemParty = partyId + 1;
+    sItemMove = moveIndex;
+}
+
+void RemoteBattle_ApplyItemEffect(u8 battler, u16 item, u8 partyPlus1, u8 moveIndex)
+{
+    u8 savedActive = gActiveBattler;
+    u8 savedMenu = gBattlerInMenuId;
+
+    if (partyPlus1 == 0 || partyPlus1 > PARTY_SIZE)
+        return;
+    gBattlerInMenuId = battler;
+    PokemonUseItemEffects(&gPlayerParty[partyPlus1 - 1], item, partyPlus1 - 1, moveIndex, FALSE);
+    gActiveBattler = savedActive;
+    gBattlerInMenuId = savedMenu;
 }
 
 void RemoteBattle_CaptureTwoReturn(u8 battler, u8 ret8, u16 ret16)
@@ -761,7 +790,10 @@ void RemoteBattle_CaptureOne(u8 battler, u16 ret)
 {
     if (!gRemoteHumanBattle || sRemoteAI || battler != LocalBattler())
         return;
-    QueueOutgoing(CHOICE_ONE, ret & 0xFF, ret >> 8, 0, 0);
+    if (ret == 0)
+        RemoteBattle_ClearItemEffect();
+    QueueOutgoing(CHOICE_ONE, ret & 0xFF, ret >> 8, sItemParty, sItemMove);
+    RemoteBattle_ClearItemEffect();
 }
 
 bool8 RemoteBattle_PopChoice(struct RemoteChoice *choice)

@@ -60,6 +60,9 @@ void RemoteBattle_ApplySeed(void);
 bool8 RemoteBattle_IsGuest(void);
 // The player's own battle menu: a menu entry the rules take away.
 bool8 RemoteBattle_BlockAction(u8 cursor);
+void RemoteBattle_ClearItemEffect(void);
+void RemoteBattle_NoteItemEffect(u8 partyId, u8 moveIndex);
+void RemoteBattle_ApplyItemEffect(u8 battler, u16 item, u8 partyPlus1, u8 moveIndex);
 // Copies what the local player's menu emits to the other game.
 void RemoteBattle_CaptureTwoReturn(u8 battler, u8 ret8, u16 ret16);
 void RemoteBattle_CaptureChosenMon(u8 battler, u8 partyId, const u8 *order);

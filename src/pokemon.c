@@ -4723,7 +4723,11 @@ void CopyPlayerPartyMonToBattleData(u8 battler, u8 partyIndex)
 
 bool8 ExecuteTableBasedItemEffect(struct Pokemon *mon, u16 item, u8 partyIndex, u8 moveIndex)
 {
-    return PokemonUseItemEffects(mon, item, partyIndex, moveIndex, FALSE);
+    bool8 noEffect = PokemonUseItemEffects(mon, item, partyIndex, moveIndex, FALSE);
+
+    if (!noEffect && gMain.inBattle)
+        RemoteBattle_NoteItemEffect(partyIndex, moveIndex);
+    return noEffect;
 }
 
 #define UPDATE_FRIENDSHIP_FROM_ITEM()                                                                   \
@@ -5826,6 +5830,9 @@ void EvolutionRenameMon(struct Pokemon *mon, u16 oldSpecies, u16 newSpecies)
 u8 GetPlayerFlankId(void)
 {
     u8 flankId = 0;
+
+    if (RemoteBattle_IsGuest())
+        return 1;   // the guest's own Pokémon are the back half of the party
     switch (gLinkPlayers[GetMultiplayerId()].id)
     {
     case 0:
