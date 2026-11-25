@@ -15,7 +15,7 @@ jobs:
       - name: Get mGBA
         run: git clone --depth 1 https://github.com/mgba-emu/mgba.git mgba
       - name: Get mbedTLS
-        run: git clone --depth 1 --branch mbedtls-3.6.2 https://github.com/Mbed-TLS/mbedtls.git mbedtls
+        run: git clone --depth 1 --branch mbedtls-3.6.2 --recurse-submodules --shallow-submodules https://github.com/Mbed-TLS/mbedtls.git mbedtls
       - name: Patch in the bridge
         run: python3 tools/emu-bridge/patch_libretro.py mgba
       - name: Build libretro core for arm64
