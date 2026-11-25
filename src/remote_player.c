@@ -26,6 +26,7 @@
 // Queued events at which the remote speeds up to catch up.
 #define HURRY_THRESHOLD         4
 #define SPAWN_RETRY_FRAMES      60
+#define SILENT_DESPAWN_FRAMES   600     // each player speaks at least once a second
 // Remote players are only created inside this window around the local player.
 #define VIEW_HALF_WIDTH         7
 #define VIEW_HALF_HEIGHT        5
@@ -47,6 +48,7 @@ struct RemoteSlot
     u8 mapNum;
     u8 forceResync;     // next positional event repositions instead of walking
     u8 spawnCooldown;
+    u16 silentFrames;       // since the last event from this player
     s16 targetX;        // where they say they are, in their map's coordinates
     s16 targetY;
     u16 lastSeqTag;     // 0x100 | seq of the last queued STEP/TURN (dedup)
@@ -252,6 +254,7 @@ void RemotePlayer_Init(void)
         sSlots[i].known = FALSE;
         sSlots[i].forceResync = TRUE;
         sSlots[i].spawnCooldown = 0;
+        sSlots[i].silentFrames = 0;
         sSlots[i].lastSeqTag = 0;
         sSlots[i].qHead = 0;
         sSlots[i].qTail = 0;
@@ -867,6 +870,8 @@ static void DrainRx(void)
     {
         u8 kind = REMOTE_EVENT_KIND(sRxRing[sRxTail].type);
 
+        if (REMOTE_EVENT_SLOT(sRxRing[sRxTail].type) < REMOTE_MAX_PLAYERS)
+            sSlots[REMOTE_EVENT_SLOT(sRxRing[sRxTail].type)].silentFrames = 0;
         if (kind >= REMOTE_EVENT_BPARTY)
             RemoteBattle_HandleRx(&sRxRing[sRxTail]);
         else
@@ -928,6 +933,20 @@ void RemotePlayer_Tick(void)
         if (sSlots[i].spawnCooldown != 0)
             sSlots[i].spawnCooldown--;
         ConsumeSlotEvents(i);
+        // Somebody who has said nothing for a while is gone (or in a place
+        // the link cannot reach); a frozen sprite helps nobody. The next
+        // event from them places them again.
+        if (sSlots[i].silentFrames < SILENT_DESPAWN_FRAMES)
+        {
+            sSlots[i].silentFrames++;
+        }
+        else if (sSlots[i].known)
+        {
+            DespawnSlot(i);
+            sSlots[i].known = FALSE;
+            sSlots[i].forceResync = TRUE;
+            sSlots[i].qHead = sSlots[i].qTail = 0;
+        }
     }
 }
 

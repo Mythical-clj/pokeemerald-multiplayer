@@ -13,8 +13,11 @@
 #define SIO_MAX_WORDS       8
 #define EVENT_WORDS         (sizeof(struct RemoteEvent) / 2)
 
-// VBlanks without a Tick before the port is given back to the game.
-#define IDLE_VBLANKS_BEFORE_RELEASE 3
+// VBlanks without a Tick before the port is given back to the game. Warps and
+// map loads take a second or two and must not drop the link (a link that is
+// let go in the middle of one did not come back); the game's own link
+// announces itself through RemoteSio_GameLinkOpened.
+#define IDLE_VBLANKS_BEFORE_RELEASE 900
 // How often the port configuration is checked while we hold it.
 #define GUARD_PERIOD_VBLANKS        30
 // Without any serial interrupt for this long the port is armed again.
