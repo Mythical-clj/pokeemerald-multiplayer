@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"
 #include "battle_anim.h"
@@ -1242,7 +1243,11 @@ static void OpponentHandleDrawTrainerPic(void)
     u32 trainerPicId;
     s16 xPos;
 
-    if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
+    if (gRemoteVersus)
+    {
+        trainerPicId = RemoteBattle_VersusTrainerPic();
+    }
+    else if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
     {
         trainerPicId = GetSecretBaseTrainerPicIndex();
     }
@@ -1326,7 +1331,11 @@ static void OpponentHandleTrainerSlide(void)
 {
     u32 trainerPicId;
 
-    if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
+    if (gRemoteVersus)
+    {
+        trainerPicId = RemoteBattle_VersusTrainerPic();
+    }
+    else if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
     {
         trainerPicId = GetSecretBaseTrainerPicIndex();
     }
@@ -1537,8 +1546,60 @@ static void OpponentHandlePrintSelectionString(void)
     OpponentBufferExecCompleted();
 }
 
+// With a person on the other end the choice comes from their game: wait for
+// it, then hand it to the engine exactly as their menu did.
+static void OpponentWaitForRemote(void)
+{
+    struct RemoteChoice choice;
+
+    if (RemoteBattle_PopChoice(&choice))
+    {
+        u8 order[3];
+        u16 value;
+
+        switch (choice.kind)
+        {
+        case 1:
+            value = choice.b | (choice.c << 8);
+            if (choice.a == B_ACTION_EXEC_SCRIPT)
+                value ^= 0x100; // their target is the other battler in this game
+            BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, choice.a, value);
+            break;
+        case 2:
+            order[0] = choice.b;
+            order[1] = choice.c;
+            order[2] = choice.d;
+            if (choice.a < PARTY_SIZE)
+                *(gBattleStruct->monToSwitchIntoId + gActiveBattler) = choice.a;
+            BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, choice.a, order);
+            break;
+        default:
+            BtlController_EmitOneReturnValue(B_COMM_TO_ENGINE, choice.a | (choice.b << 8));
+            break;
+        }
+        OpponentBufferExecCompleted();
+    }
+    else if (RemoteBattle_WaitTimedOut())
+    {
+        // Contact lost: from here on the game plays this battler. The
+        // command is still in the buffer, so it simply runs again.
+        RemoteBattle_GiveUpOnRemote();
+        gBattlerControllerFuncs[gActiveBattler] = OpponentBufferRunCommand;
+    }
+}
+
+static bool8 OpponentWaitForRemoteChoice(void)
+{
+    if (!RemoteBattle_ControlsBattler(gActiveBattler))
+        return FALSE;
+    gBattlerControllerFuncs[gActiveBattler] = OpponentWaitForRemote;
+    return TRUE;
+}
+
 static void OpponentHandleChooseAction(void)
 {
+    if (OpponentWaitForRemoteChoice())
+        return;
     AI_TrySwitchOrUseItem();
     OpponentBufferExecCompleted();
 }
@@ -1550,6 +1611,8 @@ static void OpponentHandleYesNoBox(void)
 
 static void OpponentHandleChooseMove(void)
 {
+    if (OpponentWaitForRemoteChoice())
+        return;
     if (gBattleTypeFlags & BATTLE_TYPE_PALACE)
     {
         BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, B_ACTION_EXEC_SCRIPT, ChooseMoveAndTargetInBattlePalace());
@@ -1621,6 +1684,9 @@ static void OpponentHandleChooseItem(void)
 static void OpponentHandleChoosePokemon(void)
 {
     s32 chosenMonId;
+
+    if (OpponentWaitForRemoteChoice())
+        return;
 
     if (*(gBattleStruct->AI_monToSwitchIntoId + gActiveBattler) == PARTY_SIZE)
     {

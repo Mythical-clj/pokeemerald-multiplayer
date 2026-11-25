@@ -22,6 +22,7 @@
 #endif
 
 struct RemoteEvent;
+struct VersusRequest;
 
 extern bool8 gRemoteBattleActive;   // the current battle has a remote partner
 extern bool8 gRemoteSplitTrainer;   // one trainer plays both opponent slots
@@ -59,7 +60,13 @@ void RemoteBattle_BattleTick(void);
 void RemoteBattle_ApplySeed(void);
 bool8 RemoteBattle_IsGuest(void);
 // A versus battle against the person in a slot, agreed in the overworld.
-bool8 RemoteBattle_BeginVersus(u8 slot, bool8 requester, u8 session);
+bool8 RemoteBattle_BeginVersus(const struct VersusRequest *request);
+u8 RemoteBattle_GetTeamTag(void);
+extern bool8 gRemoteVersus;         // the opponent is a person, both games run the battle
+void RemoteBattle_FillVersusParty(void);
+bool8 RemoteBattle_TieRoll(void);
+u8 RemoteBattle_VersusTrainerPic(void);
+const u8 *RemoteBattle_VersusClassName(void);
 // The player's own battle menu: a menu entry the rules take away.
 bool8 RemoteBattle_BlockAction(u8 cursor);
 void RemoteBattle_ClearItemEffect(void);

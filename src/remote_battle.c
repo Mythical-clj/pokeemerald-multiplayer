@@ -9,6 +9,8 @@
 #include "remote_player.h"
 #include "remote_sio.h"
 #include "remote_social.h"
+#include "battle_transition.h"
+#include "constants/opponents.h"
 #include "overworld.h"
 #include "field_player_avatar.h"
 #include "random.h"
@@ -164,6 +166,7 @@ struct SeenAward
 EWRAM_DATA bool8 gRemoteBattleActive = FALSE;
 EWRAM_DATA bool8 gRemoteSplitTrainer = FALSE;
 EWRAM_DATA bool8 gRemoteHumanBattle = FALSE;
+EWRAM_DATA bool8 gRemoteVersus = FALSE;
 
 static EWRAM_DATA struct PeerTeam sPeers[REMOTE_MAX_PLAYERS] = {0};
 
@@ -192,6 +195,7 @@ static EWRAM_DATA u8 sPick[TEAM_SIZE] = {0};
 static EWRAM_DATA u8 sPickCount = 0;
 static EWRAM_DATA u32 sExpBefore[TEAM_SIZE] = {0};
 static EWRAM_DATA u8 sPartnerGender = MALE;
+static EWRAM_DATA struct Pokemon sVersusEnemy[TEAM_SIZE] = {{0}};
 static EWRAM_DATA u8 sPartnerName[NAME_BYTES + 1] = {0};
 static EWRAM_DATA struct Pokemon sBattleParty[PARTY_SIZE] = {0};
 
@@ -702,19 +706,43 @@ static void QueueOutgoing(u8 kind, u8 a, u8 b, u8 c, u8 d)
 // Choices made in the battle menu
 // ---------------------------------------------------------------------------
 
+// Versus: each game plays its own player as battler 0 against the other's
+// team on battler 1, so the one who asked and the one who was asked see the
+// same kind of battle. The guest's engine is the mirror image of the host's.
 static u8 LocalBattler(void)
 {
+    if (gRemoteVersus)
+        return 0;
     return sRole == ROLE_GUEST ? 2 : 0;
 }
 
 static u8 RemoteBattler(void)
 {
+    if (gRemoteVersus)
+        return 1;
     return sRole == ROLE_GUEST ? 0 : 2;
 }
 
 bool8 RemoteBattle_IsGuest(void)
 {
-    return gRemoteHumanBattle && sRole == ROLE_GUEST;
+    return gRemoteHumanBattle && !gRemoteVersus && sRole == ROLE_GUEST;
+}
+
+static bool8 IsMirrored(void)
+{
+    return gRemoteVersus && sRole == ROLE_GUEST;
+}
+
+// A speed tie is settled by a coin toss. In the mirrored engine the two
+// battlers swap places, so the toss is turned around to pick the same
+// Pokémon in both games.
+bool8 RemoteBattle_TieRoll(void)
+{
+    u16 roll = Random() & 1;
+
+    if (IsMirrored())
+        roll ^= 1;
+    return roll;
 }
 
 bool8 RemoteBattle_ControlsBattler(u8 battler)
@@ -726,7 +754,8 @@ bool8 RemoteBattle_ControlsBattler(u8 battler)
 // guest's own flank, and item effects are relayed (see below).
 bool8 RemoteBattle_BlockAction(u8 cursor)
 {
-    return FALSE;
+    // The other player's bag cannot be replayed on the opponent's side.
+    return gRemoteVersus && cursor == 1;
 }
 
 // An item used from the bag changes the user's party in the menu itself. The
@@ -831,14 +860,19 @@ void RemoteBattle_BattleTick(void)
         return;
 
     sBattleFrame++;
-    if (gBattleResults.battleTurnCounter != sLastTurnSeen && gBattlersCount == MAX_BATTLERS_COUNT)
+    if (gBattleResults.battleTurnCounter != sLastTurnSeen
+     && (gBattlersCount == MAX_BATTLERS_COUNT || (gRemoteVersus && gBattlersCount >= 2)))
     {
         u16 hash = gBattleResults.battleTurnCounter;
         u8 i;
         u8 slot;
 
-        for (i = 0; i < MAX_BATTLERS_COUNT; i++)
-            hash = hash * 31 + gBattleMons[i].hp + gBattleMons[i].species;
+        for (i = 0; i < gBattlersCount; i++)
+        {
+            u8 b = IsMirrored() ? (i ^ 1) : i;
+
+            hash = hash * 31 + gBattleMons[b].hp + gBattleMons[b].species;
+        }
         slot = gBattleResults.battleTurnCounter % HASH_TURNS;
         sHashTurn[slot] = gBattleResults.battleTurnCounter;
         sHashValue[slot] = hash;
@@ -1234,9 +1268,98 @@ finish:
     return gRemoteBattleActive;
 }
 
-bool8 RemoteBattle_BeginVersus(u8 slot, bool8 requester, u8 session)
+u8 RemoteBattle_GetTeamTag(void)
 {
-    return FALSE;
+    return sSendValid ? sSendTag : 0;
+}
+
+static const u8 sVersusClass[] = _("TRAINER");
+
+const u8 *RemoteBattle_VersusClassName(void)
+{
+    return sVersusClass;
+}
+
+u8 RemoteBattle_VersusTrainerPic(void)
+{
+    return sPartnerGender == FEMALE ? TRAINER_PIC_MAY : TRAINER_PIC_BRENDAN;
+}
+
+// The other player's team plays the opponent's side.
+void RemoteBattle_FillVersusParty(void)
+{
+    u8 i;
+
+    ZeroEnemyPartyMons();
+    for (i = 0; i < TEAM_SIZE; i++)
+        gEnemyParty[i] = sVersusEnemy[i];
+}
+
+static void CB2_VersusDone(void)
+{
+    // A friendly battle: nothing that happened in it stays.
+    LoadPlayerParty();
+    CalculatePlayerPartyCount();
+    gSaveBlock1Ptr->money = sMoneyBefore;
+
+    gRemoteHumanBattle = FALSE;
+    gRemoteVersus = FALSE;
+    gRemoteBattleActive = FALSE;
+    sRole = ROLE_NONE;
+    sRemoteAI = FALSE;
+    gTrainerBattleOpponent_A = 0;
+    gTrainerBattleOpponent_B = 0;
+    SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic);
+}
+
+bool8 RemoteBattle_BeginVersus(const struct VersusRequest *request)
+{
+    struct PeerTeam *peer;
+    u8 i;
+
+    if (!REMOTE_BATTLE_ENABLED || request->slot >= REMOTE_MAX_PLAYERS || gMain.inBattle)
+        return FALSE;
+    peer = &sPeers[request->slot];
+    // Both games must build the battle from the teams both sides saw.
+    if (!sSendValid || !peer->ready || request->myTag == 0
+     || sSendTag != request->myTag || peer->readyTag != request->peerTag)
+        return FALSE;
+
+    for (i = 0; i < TEAM_SIZE; i++)
+        sVersusEnemy[i] = peer->mons[i];
+    for (i = 0; i < NAME_BYTES; i++)
+        sPartnerName[i] = peer->name[i];
+    sPartnerName[NAME_BYTES] = EOS;
+    sPartnerGender = RemotePlayer_GetGender(request->slot);
+    sMoneyBefore = gSaveBlock1Ptr->money;
+
+    SavePlayerParty();
+    for (i = 0; i < PARTY_SIZE; i++)
+        ZeroMonData(&gPlayerParty[i]);
+    for (i = 0; i < TEAM_SIZE; i++)
+        gPlayerParty[i] = sSendMons[i];
+    CalculatePlayerPartyCount();
+
+    sRole = request->requester ? ROLE_HOST : ROLE_GUEST;
+    sSession = request->session;
+    sSeed = request->seed;
+    sPartnerSlot = request->slot;
+    sAwaitingAck = FALSE;
+    sStartAcked = TRUE;
+    ResetChoiceRings();
+    gRemoteBattleActive = FALSE;
+    gRemoteSplitTrainer = FALSE;
+    gRemoteHumanBattle = TRUE;
+    gRemoteVersus = TRUE;
+
+    gTrainerBattleOpponent_A = TRAINER_SAWYER_1;
+    gTrainerBattleOpponent_B = 0;
+    gBattleTypeFlags = BATTLE_TYPE_TRAINER;
+    gMain.savedCallback = CB2_VersusDone;
+    LockPlayerFieldControls();
+    ScriptContext_Stop();
+    CreateBattleStartTask(B_TRANSITION_BLUR, 0);
+    return TRUE;
 }
 
 const u8 *RemoteBattle_GetNameOfSlot(u8 slot)

@@ -698,7 +698,11 @@ static void CB2_InitBattleInternal(void)
     {
         // With a human partner both games draw the same trainer team.
         RemoteBattle_ApplySeed();
-        if (gRemoteSplitTrainer)
+        if (gRemoteVersus)
+        {
+            RemoteBattle_FillVersusParty();
+        }
+        else if (gRemoteSplitTrainer)
         {
             SplitTrainerPartyOverOpponents();
         }
@@ -4756,7 +4760,7 @@ u8 GetWhoStrikesFirst(u8 battler1, u8 battler2, bool8 ignoreChosenMoves)
         // both priorities are the same
         if (gBattleMoves[moveBattler1].priority == gBattleMoves[moveBattler2].priority)
         {
-            if (speedBattler1 == speedBattler2 && Random() & 1)
+            if (speedBattler1 == speedBattler2 && RemoteBattle_TieRoll())
                 strikesFirst = 2; // same speeds, same priorities
             else if (speedBattler1 < speedBattler2)
                 strikesFirst = 1; // battler2 has more speed
@@ -4773,7 +4777,7 @@ u8 GetWhoStrikesFirst(u8 battler1, u8 battler2, bool8 ignoreChosenMoves)
     // both priorities are equal to 0
     else
     {
-        if (speedBattler1 == speedBattler2 && Random() & 1)
+        if (speedBattler1 == speedBattler2 && RemoteBattle_TieRoll())
             strikesFirst = 2; // same speeds, same priorities
         else if (speedBattler1 < speedBattler2)
             strikesFirst = 1; // battler2 has more speed

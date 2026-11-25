@@ -2524,7 +2524,9 @@ u32 BattleStringExpandPlaceholders(const u8 *src, u8 *dst)
                 toCpy = gAbilityNames[sBattlerAbilities[gEffectBattler]];
                 break;
             case B_TXT_TRAINER1_CLASS: // trainer class name
-                if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
+                if (gRemoteVersus)
+                    toCpy = RemoteBattle_VersusClassName();
+                else if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
                     toCpy = gTrainerClassNames[GetSecretBaseTrainerClass()];
                 else if (gTrainerBattleOpponent_A == TRAINER_UNION_ROOM)
                     toCpy = gTrainerClassNames[GetUnionRoomTrainerClass()];
@@ -2540,7 +2542,11 @@ u32 BattleStringExpandPlaceholders(const u8 *src, u8 *dst)
                     toCpy = gTrainerClassNames[gTrainers[gTrainerBattleOpponent_A].trainerClass];
                 break;
             case B_TXT_TRAINER1_NAME: // trainer1 name
-                if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
+                if (gRemoteVersus)
+                {
+                    toCpy = RemoteBattle_GetPartnerName();
+                }
+                else if (gBattleTypeFlags & BATTLE_TYPE_SECRET_BASE)
                 {
                     for (i = 0; i < (s32) ARRAY_COUNT(gBattleResources->secretBase->trainerName); i++)
                         text[i] = gBattleResources->secretBase->trainerName[i];

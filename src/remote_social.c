@@ -86,6 +86,9 @@ static EWRAM_DATA bool8 sShownRequest = FALSE;
 static EWRAM_DATA bool8 sBattleReady = FALSE;
 static EWRAM_DATA bool8 sIsRequester = FALSE;
 static EWRAM_DATA u8 sClosedSession = 0;
+static EWRAM_DATA u32 sSeed = 0;
+static EWRAM_DATA u8 sMyTag = 0;
+static EWRAM_DATA u8 sPeerTag = 0;
 
 static EWRAM_DATA u8 sPhase = PHASE_NONE;
 static EWRAM_DATA u8 sOfferSlot = 0;
@@ -145,6 +148,30 @@ static bool8 Send(u8 sub, u8 a, u8 b, const u8 *data)
     for (i = 0; i < 6; i++)
         bytes[6 + i] = data != NULL ? data[i] : 0;
     return RemotePlayer_TryPushTx(&event);
+}
+
+static void SendRequestMessage(void)
+{
+    u8 data[6];
+
+    data[0] = sSeed & 0xFF;
+    data[1] = (sSeed >> 8) & 0xFF;
+    data[2] = (sSeed >> 16) & 0xFF;
+    data[3] = sSeed >> 24;
+    data[4] = sMyTag;
+    data[5] = 0;
+    Send(SUB_REQUEST, sKind, sSession, data);
+}
+
+static void SendReplyMessage(void)
+{
+    u8 data[6];
+    u8 i;
+
+    data[0] = sMyTag;
+    for (i = 1; i < 6; i++)
+        data[i] = 0;
+    Send(SUB_REPLY, sReplyValue, sSession, data);
 }
 
 static void SendChatParts(void)
@@ -296,18 +323,22 @@ void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
             sSession = b;
             sTimer = 0;
             sShownRequest = FALSE;
+            sSeed = data[0] | (data[1] << 8) | (data[2] << 16) | ((u32)data[3] << 24);
+            sPeerTag = data[4];
             ClearTrade();
         }
         else if (!(sSession == b && sPeer == slot))
         {
             // Busy with something else: say no.
-            sReplyValue = 0;
             Send(SUB_REPLY, 0, b, NULL);
         }
         break;
     case SUB_REPLY:
         if (sState == ST_REQUESTING && b == sSession && slot == sPeer)
+        {
+            sPeerTag = data[0];
             sReplyResult = a != 0 ? 1 : 2;
+        }
         break;
     case SUB_CHUNK:
         if (sState == ST_AGREED && b == sSession && slot == sPeer && sKind == SOCIAL_REQUEST_TRADE)
@@ -388,7 +419,7 @@ void RemoteSocial_Tick(void)
 
     if (sReplyRepeats != 0 && sFrame % REPLY_REPEAT_FRAMES == 0)
     {
-        Send(SUB_REPLY, sReplyValue, sSession, NULL);
+        SendReplyMessage();
         sReplyRepeats--;
     }
 
@@ -397,7 +428,7 @@ void RemoteSocial_Tick(void)
     case ST_REQUESTING:
         sTimer++;
         if (sTimer % REQUEST_RESEND_FRAMES == 1)
-            Send(SUB_REQUEST, sKind, sSession, NULL);
+            SendRequestMessage();
         if (sTimer >= REQUEST_TIMEOUT_FRAMES && sReplyResult == 0)
             sReplyResult = 3;
         break;
@@ -503,7 +534,9 @@ void RemoteSocial_SendRequest(void)
     sIsRequester = TRUE;
     sState = ST_REQUESTING;
     ClearTrade();
-    Send(SUB_REQUEST, sKind, sSession, NULL);
+    sSeed = Random() | ((u32)Random() << 16);
+    sMyTag = RemoteBattle_GetTeamTag();
+    SendRequestMessage();
 }
 
 static void Task_WaitReply(u8 taskId)
@@ -556,7 +589,8 @@ void RemoteSocial_Answer(void)
     sIsRequester = FALSE;
     sReplyValue = gSpecialVar_0x8005 != 0;
     sReplyRepeats = REPLY_REPEATS;
-    Send(SUB_REPLY, sReplyValue, sSession, NULL);
+    sMyTag = RemoteBattle_GetTeamTag();
+    SendReplyMessage();
     if (sReplyValue)
     {
         sState = ST_AGREED;
@@ -570,14 +604,17 @@ void RemoteSocial_Answer(void)
     }
 }
 
-bool8 RemoteSocial_TakeBattleRequest(u8 *slot, bool8 *isRequester, u8 *session)
+bool8 RemoteSocial_TakeBattleRequest(struct VersusRequest *out)
 {
     if (!sBattleReady)
         return FALSE;
     sBattleReady = FALSE;
-    *slot = sPeer;
-    *session = sSession;
-    *isRequester = sIsRequester;
+    out->slot = sPeer;
+    out->session = sSession;
+    out->requester = sIsRequester;
+    out->myTag = sMyTag;
+    out->peerTag = sPeerTag;
+    out->seed = sSeed;
     return TRUE;
 }
 
@@ -591,11 +628,9 @@ void RemoteSocial_GetAgreedKind(void)
 // waitstate only when the battle could not start.
 void RemoteSocial_StartBattle(void)
 {
-    u8 slot;
-    bool8 requester;
-    u8 session;
+    struct VersusRequest request;
 
-    if (RemoteSocial_TakeBattleRequest(&slot, &requester, &session) && RemoteBattle_BeginVersus(slot, requester, session))
+    if (RemoteSocial_TakeBattleRequest(&request) && RemoteBattle_BeginVersus(&request))
     {
         Reset();
         return;
