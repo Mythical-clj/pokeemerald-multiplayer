@@ -22,6 +22,7 @@ void BattleSetup_StartWildBattle(void);
 void BattleSetup_StartBattlePikeWildBattle(void);
 void BattleSetup_StartRoamerBattle(void);
 void StartWallyTutorialBattle(void);
+void CreateBattleStartTask(u8 transition, u16 song);
 void BattleSetup_StartScriptedWildBattle(void);
 void BattleSetup_StartLatiBattle(void);
 void BattleSetup_StartLegendaryBattle(void);
