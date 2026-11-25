@@ -56,7 +56,8 @@ bool8 RemoteBattle_ShouldRematch(void);
 bool8 RemoteBattle_AwaitingStartAck(void);
 bool8 RemoteBattle_Yielded(void);
 bool8 RemoteBattle_StartTimedOut(void);
-void RemoteBattle_ShowWaiting(bool8 noReply);
+void RemoteBattle_ShowWaiting(u8 which);   // 0 waiting, 1 no reply, 2 come closer
+bool8 RemoteBattle_AwaitingNear(void);
 void RemoteBattle_HideWaiting(void);
 
 // Battle side. Tick runs every frame of the battle.

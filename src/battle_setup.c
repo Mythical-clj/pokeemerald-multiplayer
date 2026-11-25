@@ -471,9 +471,18 @@ static void Task_WaitForPartnerThenBattle(u8 taskId)
 {
     s16 *data = gTasks[taskId].data;
 
-    if (data[0] == 0)
+    if (RemoteBattle_AwaitingNear())
     {
-        RemoteBattle_ShowWaiting(FALSE);
+        if (data[0] != 3)
+        {
+            RemoteBattle_ShowWaiting(2);
+            data[0] = 3;
+        }
+        return;
+    }
+    if (data[0] == 0 || data[0] == 3)
+    {
+        RemoteBattle_ShowWaiting(0);
         data[0] = 1;
     }
     if (RemoteBattle_Yielded())
@@ -484,7 +493,7 @@ static void Task_WaitForPartnerThenBattle(u8 taskId)
     {
         if (data[0] == 1)
         {
-            RemoteBattle_ShowWaiting(TRUE);
+            RemoteBattle_ShowWaiting(1);
             data[0] = 2;
             data[1] = 0;
         }
@@ -1372,7 +1381,7 @@ void BattleSetup_StartTrainerBattle(void)
     else
     {
         RemoteBattle_PrepareTrainerBattle();
-        if (RemoteBattle_AwaitingStartAck())
+        if (RemoteBattle_AwaitingStartAck() || RemoteBattle_AwaitingNear())
             CreateTask(Task_WaitForPartnerThenBattle, 1);
         else
             DoTrainerBattle();

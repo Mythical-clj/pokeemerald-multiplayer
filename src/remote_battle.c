@@ -56,9 +56,10 @@ static void CB2_RemoteBattleDone(void);
 #define CHOICE_RESEND_FRAMES    10
 #define SYNC_PERIOD_FRAMES      15
 #define START_RESEND_FRAMES     20
-#define START_TIMEOUT_FRAMES    600
+#define START_TIMEOUT_FRAMES    1200    // 20 s before the game plays the partner
+#define NEAR_TIMEOUT_FRAMES     1500    // 25 s for the other player to come within range
 #define GUEST_ACCEPT_FRAMES     24      // acks sent before the guest's battle starts
-#define GUEST_PENDING_FRAMES    300     // how long the guest waits for a moment to join
+#define GUEST_PENDING_FRAMES    1200     // how long the guest waits for a moment to join
 #define REMOTE_WAIT_FRAMES      3600    // contact lost: the remote battler plays itself
 
 #define ROLE_NONE   0
@@ -536,12 +537,16 @@ static EWRAM_DATA u8 sLastSession = 0;
 static EWRAM_DATA bool8 sYielded = FALSE;
 static EWRAM_DATA bool8 sStartTimedOut = FALSE;
 static EWRAM_DATA bool8 sWaitShown = FALSE;
+static EWRAM_DATA bool8 sAwaitingNear = FALSE;
+static EWRAM_DATA bool8 sNearGaveUp = FALSE;
+static EWRAM_DATA u16 sNearWait = 0;
 
 static const u8 sText_WaitingForPlayer[] = _("Waiting for the other player...");
+static const u8 sText_WaitingNear[] = _("Waiting for the other player\nto come closer...");
 static const u8 sText_NoReply[] = _("No reply. A computer partner\nwill take their place.");
 
 // The message box of the field, as the link rooms use while they wait.
-void RemoteBattle_ShowWaiting(bool8 noReply)
+void RemoteBattle_ShowWaiting(u8 which)
 {
     if (!sWaitShown)
     {
@@ -550,7 +555,7 @@ void RemoteBattle_ShowWaiting(bool8 noReply)
         sWaitShown = TRUE;
     }
     FillWindowPixelBuffer(0, PIXEL_FILL(1));
-    AddTextPrinterParameterized(0, FONT_NORMAL, noReply ? sText_NoReply : sText_WaitingForPlayer, 0, 1, 0, NULL);
+    AddTextPrinterParameterized(0, FONT_NORMAL, which == 2 ? sText_WaitingNear : (which == 1 ? sText_NoReply : sText_WaitingForPlayer), 0, 1, 0, NULL);
     CopyWindowToVram(0, COPYWIN_FULL);
 }
 
@@ -560,6 +565,11 @@ void RemoteBattle_HideWaiting(void)
         return;
     sWaitShown = FALSE;
     ClearDialogWindowAndFrame(0, TRUE);
+}
+
+bool8 RemoteBattle_AwaitingNear(void)
+{
+    return sAwaitingNear;
 }
 
 bool8 RemoteBattle_StartTimedOut(void)
@@ -1154,9 +1164,11 @@ static void TickGuest(void)
     sStartParts = 0;
     sGuestAccepting = TRUE;
     sGuestAcceptAge = 0;
-    RemoteBattle_ShowWaiting(FALSE);
+    RemoteBattle_ShowWaiting(0);
     LockPlayerFieldControls();
 }
+
+static bool8 FindPartner(u8 *slot);
 
 void RemoteBattle_Tick(void)
 {
@@ -1185,6 +1197,22 @@ void RemoteBattle_Tick(void)
     }
 #endif
 
+    if (sAwaitingNear)
+    {
+        u8 slot;
+
+        if (FindPartner(&slot))
+        {
+            sAwaitingNear = FALSE;
+            RemoteBattle_PrepareTrainerBattle();
+        }
+        else if (++sNearWait >= NEAR_TIMEOUT_FRAMES)
+        {
+            sAwaitingNear = FALSE;
+            sNearGaveUp = TRUE;
+            RemoteBattle_PrepareTrainerBattle();
+        }
+    }
     TickHostStart();
     TickGuest();
     if (sSendValid && sFrame % CHUNK_PERIOD_FRAMES == 0)
@@ -1318,6 +1346,22 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     sYielded = FALSE;
     sStartTimedOut = FALSE;
     sMoneyBefore = gSaveBlock1Ptr->money;
+
+    sAwaitingNear = FALSE;
+    if (REMOTE_BATTLE_ENABLED && !sNearGaveUp && !FindPartner(&slot) && TrainerFitsPartnerBattle())
+    {
+        u8 other;
+        u8 otherGender;
+
+        // Someone is on this map but too far away: give them time to walk up.
+        if (RemotePlayer_FindNearby(60, &other, &otherGender) && sPeers[other].ready)
+        {
+            sAwaitingNear = TRUE;
+            sNearWait = 0;
+            return FALSE;
+        }
+    }
+    sNearGaveUp = FALSE;
 
     if (!REMOTE_BATTLE_ENABLED || !FindPartner(&slot) || !TrainerFitsPartnerBattle())
         goto finish;
