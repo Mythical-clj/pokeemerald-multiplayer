@@ -9,21 +9,33 @@ on:
 
 jobs:
   build:
+    # Three variants, so a crash on a device can be traced:
+    #   plain = unmodified mGBA built with this same configuration
+    #   notls = with the bridge but no TLS (UDP / ws:// only)
+    #   tls   = the full bridge
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [plain, notls, tls]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Get mGBA
         run: git clone --depth 1 https://github.com/mgba-emu/mgba.git mgba
       - name: Get mbedTLS
+        if: matrix.variant == 'tls'
         run: git clone --depth 1 --branch mbedtls-3.6.2 --recurse-submodules --shallow-submodules https://github.com/Mbed-TLS/mbedtls.git mbedtls
       - name: Patch in the bridge
+        if: matrix.variant != 'plain'
         run: python3 tools/emu-bridge/patch_libretro.py mgba
       - name: Build libretro core for arm64
         run: |
+          TLS=""
+          if [ "${{ matrix.variant }}" = "tls" ]; then TLS="-DOWL_MBEDTLS_DIR=$GITHUB_WORKSPACE/mbedtls"; fi
           cmake -S mgba -B build \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
-            -DCMAKE_BUILD_TYPE=Release -DOWL_MBEDTLS_DIR=$GITHUB_WORKSPACE/mbedtls \
+            -DCMAKE_BUILD_TYPE=Release $TLS \
             -DBUILD_LIBRETRO=ON -DSKIP_LIBRARY=ON \
             -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF \
             -DBUILD_SHARED=OFF -DBUILD_STATIC=OFF -DUSE_EPOXY=OFF -DUSE_LUA=OFF \
@@ -31,11 +43,12 @@ jobs:
             -DUSE_SQLITE3=OFF -DUSE_ELF=OFF -DUSE_EDEV=OFF -DUSE_DISCORD_RPC=OFF \
             -DBUILD_HEADLESS=OFF -DBUILD_TEST=OFF -DBUILD_EXAMPLE=OFF -DBUILD_PYTHON=OFF
           cmake --build build --target mgba_libretro -j$(nproc)
-          find build -name 'mgba_libretro*.so'
+          mkdir -p out
+          cp build/mgba_libretro.so out/mgba_${{ matrix.variant }}_libretro_android.so
       - uses: actions/upload-artifact@v4
         with:
-          name: mgba_libretro_android_arm64
-          path: build/mgba_libretro.so
+          name: core_${{ matrix.variant }}
+          path: out/mgba_${{ matrix.variant }}_libretro_android.so
 
   host-smoke:
     # Builds the same patched core for the CI machine and runs the real ROM in it,
