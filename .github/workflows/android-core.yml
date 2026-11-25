@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Get mGBA
         run: git clone --depth 1 https://github.com/mgba-emu/mgba.git mgba
+      - name: Get mbedTLS
+        run: git clone --depth 1 --branch mbedtls-3.6.2 https://github.com/Mbed-TLS/mbedtls.git mbedtls
       - name: Patch in the bridge
         run: python3 tools/emu-bridge/patch_libretro.py mgba
       - name: Build libretro core for arm64
@@ -21,7 +23,7 @@ jobs:
           cmake -S mgba -B build \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_TYPE=Release -DOWL_MBEDTLS_DIR=$GITHUB_WORKSPACE/mbedtls \
             -DBUILD_LIBRETRO=ON -DSKIP_LIBRARY=ON \
             -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF \
             -DBUILD_SHARED=OFF -DBUILD_STATIC=OFF -DUSE_EPOXY=OFF -DUSE_LUA=OFF \

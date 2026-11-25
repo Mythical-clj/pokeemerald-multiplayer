@@ -27,4 +27,21 @@ sub("\tcore->runFrame(core);\n\tunsigned width, height;",
 sub("\tmCoreConfigDeinit(&core->config);\n\tcore->deinit(core);\n\tmappedMemoryFree(data, dataSize);",
     "\towl_bridge_detach();\n\tmCoreConfigDeinit(&core->config);\n\tcore->deinit(core);\n\tmappedMemoryFree(data, dataSize);")
 open(p, "w").write(s)
-print("patched", p)
+
+# Link mbedTLS (for wss://) when the build is given OWL_MBEDTLS_DIR.
+cm = os.path.join(root, "CMakeLists.txt")
+c = open(cm).read()
+anchor = "\ttarget_link_libraries(${BINARY_NAME}_libretro ${OS_LIB})\n"
+assert c.count(anchor) == 1
+c = c.replace(anchor, anchor + """\tif(OWL_MBEDTLS_DIR)
+\t\tset(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+\t\tset(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+\t\tset(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+\t\tset(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+\t\tadd_subdirectory(${OWL_MBEDTLS_DIR} ${CMAKE_BINARY_DIR}/mbedtls EXCLUDE_FROM_ALL)
+\t\ttarget_compile_definitions(${BINARY_NAME}_libretro PRIVATE OWL_USE_TLS)
+\t\ttarget_link_libraries(${BINARY_NAME}_libretro mbedtls mbedx509 mbedcrypto)
+\tendif()
+""")
+open(cm, "w").write(c)
+print("patched", p, "and CMakeLists.txt")
