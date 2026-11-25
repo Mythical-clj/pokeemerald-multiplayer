@@ -70,11 +70,12 @@ def gui():
             ("room", "Room (same for everyone)", "1"),
             ("peer", "Player number (1-4, different for each)", "1"),
             ("relay", "Relay", DEFAULT_RELAY))):
-        tk.Label(form, text=label, anchor="w").grid(row=row, column=0, sticky="w")
+        tk.Label(form, text=label, anchor="w", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky="w")
         var = tk.StringVar(value=str(st.get(key, default)))
         tk.Entry(form, textvariable=var, width=48).grid(row=row, column=1, padx=6, pady=2)
         fields[key] = var
 
+    rawvar = tk.BooleanVar(value=False)
     health = owl_text.Health()
     summary = tk.StringVar(value="\n".join(health.summary()))
     tk.Label(root, textvariable=summary, justify="left", anchor="w",
@@ -142,7 +143,7 @@ def gui():
                 else:
                     health.feed(item)
                     summary.set("\n".join(health.summary()))
-                    append(owl_text.translate(item))
+                    append(owl_text.translate(item, rawvar.get()))
         except queue.Empty:
             pass
         root.after(100, poll)
@@ -159,6 +160,7 @@ def gui():
         root.clipboard_append(log.get("1.0", "end"))
         status.set("Log copied to the clipboard")
     tk.Button(bar, text="Copy log", command=copy_log).pack(side="left")
+    tk.Checkbutton(bar, text="Show raw details (Italian)", variable=rawvar).pack(side="left", padx=8)
 
     def on_close():
         stop()

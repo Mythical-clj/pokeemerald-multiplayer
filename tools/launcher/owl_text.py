@@ -87,6 +87,19 @@ RULES = [
      r"The GBA has not reported a map yet: walk around in the overworld."),
     (r"nessun evento\. Che cosa",
      r"No events from the GBA."),
+    # --- adapter setup lines ---
+    (r"\[usb \] Cancel", r"Adapter: resetting..."),
+    (r"\[usb \] SetMode raw relay", r"Adapter: detecting the cable..."),
+    (r"\[usb \] master", r"Adapter: set as link master."),
+    (r"\[usb \] timing (\d+)", r"Adapter: link timing set (\1)."),
+    (r"\[usb \] StartHandshake", r"Adapter: starting the link with your GBA..."),
+    (r"versione club (\d+) \| impronta dei file (\w+)",
+     r"Client version \1, file fingerprint \2."),
+    (r"\[usb\] tx (\d+) frame \((\d+) errori\) \| rx (\d+) frame, (\S+) parole/s",
+     r"GBA link: you sent \1 frames to the GBA, received \3 frames from it (\4 words/s), \2 send errors."),
+    (r"filo verso il gioco: (\d+) frame scritti",
+     r"Frames written to your GBA from other players: \1."),
+    (r"\[usb \] (.*)non e' partito", r"Adapter command failed. Unplug and replug the GB-Link."),
     # --- housekeeping ---
     (r"interrotto", r"Stopped."),
     (r"chiusura", r"Closing."),
@@ -101,8 +114,11 @@ _COMPILED = [(re.compile(p), r) for p, r in RULES]
 _DROP = re.compile(r"^\s*(\[squadra\]|\[chat \]|\[mappa\]|\[club \]|\[usb\])")
 
 
-def translate(line):
-    """English version of one output line (or "" to hide it)."""
+def translate(line, show_raw=False):
+    """English version of one output line (or "" to hide it).
+
+    Lines with no translation are hidden (they are Italian detail); with
+    show_raw=True they are shown as-is, for bug reports."""
     text = line.rstrip("\n")
     if not text.strip():
         return ""
@@ -114,7 +130,7 @@ def translate(line):
         return ""
     if re.search(r"[A-Za-z]", text) and re.search(
             r"\b(il|la|che|non|per|gia|sei|nel|del|della|gli|dal|con)\b", text):
-        return "(untranslated) " + text + "\n"
+        return ("(raw) " + text + "\n") if show_raw else ""
     return text + "\n"
 
 
