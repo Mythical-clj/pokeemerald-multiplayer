@@ -50,6 +50,7 @@ struct RemoteSlot
     u8 forceResync;     // next positional event repositions instead of walking
     u8 spawnCooldown;
     u16 silentFrames;       // since the last event from this player
+    u8 dropY;               // pixels still to fall after a Fly landing
     s16 targetX;        // where they say they are, in their map's coordinates
     s16 targetY;
     u16 lastSeqTag;     // 0x100 | seq of the last queued STEP/TURN (dedup)
@@ -921,6 +922,27 @@ static void DrainLoopback(void)
 // Called once per frame from the overworld's main callback, after the game's
 // own input handling. Never from an interrupt: creating and moving objects is
 // only safe in sequence with the game's own overworld code.
+// A remote player landed from Fly: drop the sprite in from above.
+void RemotePlayer_StartDrop(u8 slot)
+{
+    if (slot < REMOTE_MAX_PLAYERS)
+        sSlots[slot].dropY = 96;
+}
+
+static void TickDrop(u8 i)
+{
+    struct RemoteSlot *slot = &sSlots[i];
+    struct ObjectEvent *object;
+
+    if (slot->dropY == 0 || slot->objectId >= OBJECT_EVENTS_COUNT)
+        return;
+    object = &gObjectEvents[slot->objectId];
+    if (!object->active || object->spriteId >= MAX_SPRITES)
+        return;
+    slot->dropY = slot->dropY > 4 ? slot->dropY - 4 : 0;
+    gSprites[object->spriteId].y2 = -(s16)slot->dropY;
+}
+
 void RemotePlayer_Tick(void)
 {
     u8 i;
@@ -948,6 +970,7 @@ void RemotePlayer_Tick(void)
     DrainRx();
     for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
     {
+        TickDrop(i);
         if (sSlots[i].spawnCooldown != 0)
             sSlots[i].spawnCooldown--;
         ConsumeSlotEvents(i);

@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_social.h"
 #include "decompress.h"
 #include "event_object_movement.h"
 #include "field_camera.h"
@@ -3507,6 +3508,7 @@ static void FlyInFieldEffect_FlyInWithBird(struct Task *task)
         objectEvent = &gObjectEvents[gPlayerAvatar.objectEventId];
         sprite = &gSprites[objectEvent->spriteId];
         SetFlyBirdPlayerSpriteId(task->tBirdSpriteId, MAX_SPRITES);
+        RemoteSocial_SendDrop();
         sprite->x += sprite->x2;
         sprite->y += sprite->y2;
         sprite->x2 = 0;

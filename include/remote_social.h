@@ -16,6 +16,7 @@ struct RemoteEvent;
 
 void RemoteSocial_Init(void);
 void RemoteSocial_Tick(void);
+void RemoteSocial_SendDrop(void);
 void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event);
 
 // What a versus battle needs, agreed in the overworld: who, which session,

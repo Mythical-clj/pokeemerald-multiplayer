@@ -35,6 +35,7 @@
 #define SUB_CANCEL      5   // b = session
 #define SUB_OK          6   // b = session: "I accept the trade" / "I have your records"
 #define SUB_MAILACK     9   // a = mail number, b = 0 delivered / 1 mailbox full, data[0-1] = recipient tag
+#define SUB_DROP        10  // the sender landed from Fly
 #define SUB_MIXCHUNK    7   // a = index, b = session, data = 6 bytes of the record (index = chunk count: checksum)
 
 #define CHAT_WORDS          9
@@ -469,6 +470,9 @@ void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
             sMailRepeatsLeft = 0;
         }
         break;
+    case SUB_DROP:
+        RemotePlayer_StartDrop(slot);
+        break;
     case SUB_REQUEST:
         if (b == sClosedSession && sState == ST_IDLE)
         {
@@ -528,6 +532,11 @@ static bool8 OverworldIsFree(void)
         && !ScriptContext_IsEnabled()
         && !ArePlayerFieldControlsLocked()
         && gPlayerAvatar.tileTransitionState == T_NOT_MOVING;
+}
+
+void RemoteSocial_SendDrop(void)
+{
+    Send(SUB_DROP, 0, 0, NULL);
 }
 
 void RemoteSocial_Tick(void)

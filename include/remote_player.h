@@ -67,6 +67,7 @@ u8 RemotePlayer_NextTxSeq(void);
 bool8 RemotePlayer_InLoopback(void);
 u8 RemotePlayer_GetGender(u8 slot);
 void RemotePlayer_DrainBattleRx(void);
+void RemotePlayer_StartDrop(u8 slot);
 bool8 RemotePlayer_SlotIsNear(u8 slot, u8 maxDistance, u8 *gender);
 u8 RemotePlayer_FindObjectNear(s16 x, s16 y, u8 direction);
 bool8 RemotePlayer_FindNearby(u8 maxDistance, u8 *slot, u8 *gender);
