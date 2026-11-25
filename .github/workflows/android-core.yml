@@ -36,3 +36,48 @@ jobs:
         with:
           name: mgba_libretro_android_arm64
           path: build/mgba_libretro.so
+
+  host-smoke:
+    # Builds the same patched core for the CI machine and runs the real ROM in it,
+    # to catch crashes that would otherwise only show up on a phone.
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gdb
+      - name: Get mGBA and mbedTLS
+        run: |
+          git clone --depth 1 https://github.com/mgba-emu/mgba.git mgba
+          git clone --depth 1 --branch mbedtls-3.6.2 --recurse-submodules --shallow-submodules https://github.com/Mbed-TLS/mbedtls.git mbedtls
+      - name: Patch in the bridge
+        run: python3 tools/emu-bridge/patch_libretro.py mgba
+      - name: Build the core for this machine
+        run: |
+          cmake -S mgba -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DOWL_MBEDTLS_DIR=$GITHUB_WORKSPACE/mbedtls \
+            -DBUILD_LIBRETRO=ON -DSKIP_LIBRARY=ON -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF \
+            -DBUILD_SHARED=OFF -DBUILD_STATIC=OFF -DUSE_EPOXY=OFF -DUSE_LUA=OFF -DUSE_FFMPEG=OFF -DUSE_ZLIB=OFF -DUSE_PNG=OFF \
+            -DUSE_LIBZIP=OFF -DUSE_MINIZIP=OFF -DUSE_SQLITE3=OFF -DUSE_ELF=OFF -DUSE_EDEV=OFF -DUSE_DISCORD_RPC=OFF \
+            -DBUILD_HEADLESS=OFF -DBUILD_TEST=OFF -DBUILD_EXAMPLE=OFF -DBUILD_PYTHON=OFF
+          cmake --build build --target mgba_libretro -j$(nproc)
+      - name: Build the test host
+        run: gcc -g -I mgba/src/platform/libretro tools/emu-bridge/test/libretro_host.c -ldl -o host
+      - name: Get the latest ROM build
+        run: |
+          id=$(gh run list --workflow "Build ROM" --branch native-multiplayer --status success --limit 1 --json databaseId -q '.[0].databaseId')
+          gh run download $id -n pokeemerald-multiplayer -D rom
+          ls -la rom
+      - name: Run the ROM in the patched core
+        run: |
+          rom=$(find rom -name '*.gba' | head -1)
+          for scenario in none udp_down ws_down wss_down; do
+            mkdir -p run_$scenario
+            case $scenario in
+              udp_down) printf 'host=127.0.0.1\nport=1\nroom=1\npeer=1\n' > run_$scenario/owl.txt ;;
+              ws_down)  printf 'relay=ws://127.0.0.1:1/ws\nroom=1\npeer=1\n' > run_$scenario/owl.txt ;;
+              wss_down) printf 'relay=wss://127.0.0.1:1/ws\nroom=1\npeer=1\n' > run_$scenario/owl.txt ;;
+            esac
+            echo "=== $scenario"
+            gdb -batch -ex run -ex bt --args ./host build/mgba_libretro.so "$rom" run_$scenario 600 2>&1 | tail -25
+            cat run_$scenario/owl_status.txt 2>/dev/null || true
+          done
