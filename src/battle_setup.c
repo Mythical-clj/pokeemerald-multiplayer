@@ -1151,7 +1151,21 @@ void SetMapVarsToTrainer(void)
     }
 }
 
+// Whether the opponent was already in the Pokenav when this fight began, so
+// the "registered" message is told once and not after every later fight.
+static const u8 *ConfigureTrainerBattleInner(const u8 *data);
+EWRAM_DATA u8 gRegisteredBeforeBattle = 0xFF;
+
 const u8 *BattleSetup_ConfigureTrainerBattle(const u8 *data)
+{
+    const u8 *script = ConfigureTrainerBattleInner(data);
+    s32 index = GetRematchIdxByTrainerIdx(gTrainerBattleOpponent_A);
+
+    gRegisteredBeforeBattle = (index >= 0 && FlagGet(TRAINER_REGISTERED_FLAGS_START + index)) ? 1 : 0;
+    return script;
+}
+
+static const u8 *ConfigureTrainerBattleInner(const u8 *data)
 {
     InitTrainerBattleVariables();
     sTrainerBattleMode = TrainerBattleLoadArg8(data);

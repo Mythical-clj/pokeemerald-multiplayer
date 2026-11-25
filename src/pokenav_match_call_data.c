@@ -1156,6 +1156,17 @@ bool32 MatchCall_HasRematchId(u32 idx)
 void SetMatchCallRegisteredFlag(void)
 {
     int index = GetRematchIdxByTrainerIdx(gSpecialVar_0x8004);
+    bool8 was = FALSE;
+
     if (index >= 0)
+    {
+        was = FlagGet(TRAINER_REGISTERED_FLAGS_START + index);
+        // After a fight, what counts is whether it was registered before it.
+        if (gRegisteredBeforeBattle != 0xFF)
+            was = gRegisteredBeforeBattle;
         FlagSet(TRAINER_REGISTERED_FLAGS_START + index);
+    }
+    gRegisteredBeforeBattle = 0xFF;
+    // The registration message is only shown when this is news.
+    gSpecialVar_Result = !was;
 }

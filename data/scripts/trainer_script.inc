@@ -1,4 +1,5 @@
 Std_RegisteredInMatchCall::
+	goto_if_eq VAR_RESULT, FALSE, Std_RegisteredInMatchCall_Done
 	buffertrainerclassname STR_VAR_1, VAR_0x8000
 	buffertrainername STR_VAR_2, VAR_0x8000
 	closemessage
@@ -8,6 +9,7 @@ Std_RegisteredInMatchCall::
 	waitfanfare
 	closemessage
 	delay 30
+Std_RegisteredInMatchCall_Done::
 	return
 
 EventScript_TryGetTrainerScript::

@@ -2246,6 +2246,18 @@ void BufferStringBattle(u16 stringID)
         break;
     }
 
+    // One trainer fills both opponent slots in a shared battle: each line
+    // of theirs is said once, not once per slot.
+    if (gRemoteSplitTrainer)
+    {
+        if (stringPtr == sText_TwoTrainersWantToBattle)
+            stringPtr = sText_Trainer1WantsToBattle;
+        else if (stringPtr == sText_TwoInGameTrainersDefeated)
+            stringPtr = sText_PlayerDefeatedLinkTrainerTrainer1;
+        else if (stringPtr == sText_Trainer2LoseText)
+            stringPtr = gText_EmptyString3;
+    }
+
     BattleStringExpandPlaceholdersToDisplayedString(stringPtr);
 }
 

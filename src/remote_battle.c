@@ -1,6 +1,7 @@
 #include "global.h"
 #include "battle.h"
 #include "battle_setup.h"
+#include "battle_message.h"
 #include "data.h"
 #include "load_save.h"
 #include "main.h"
@@ -60,7 +61,7 @@ static void CB2_RemoteBattleDone(void);
 #define NEAR_TIMEOUT_FRAMES     1500    // 25 s for the other player to come within range
 #define GUEST_ACCEPT_FRAMES     24      // acks sent before the guest's battle starts
 #define GUEST_PENDING_FRAMES    1200     // how long the guest waits for a moment to join
-#define REMOTE_WAIT_FRAMES      3600    // contact lost: the remote battler plays itself
+#define REMOTE_WAIT_FRAMES      5400    // contact lost: the remote battler plays itself
 
 #define ROLE_NONE   0
 #define ROLE_HOST   1
@@ -975,6 +976,18 @@ void RemoteBattle_CaptureOne(u8 battler, u16 ret)
     RemoteBattle_ClearItemEffect();
 }
 
+#define BATTLE_WAIT_SHOW_FRAMES 90   // short waits stay unannounced
+
+static EWRAM_DATA bool8 sBattleWaitShown = FALSE;
+
+static void HideBattleWait(void)
+{
+    if (!sBattleWaitShown)
+        return;
+    sBattleWaitShown = FALSE;
+    BattlePutTextOnWindow(gText_EmptyString3, B_WIN_MSG);
+}
+
 bool8 RemoteBattle_PopChoice(struct RemoteChoice *choice)
 {
     if (sInRead == sInNext)
@@ -982,12 +995,24 @@ bool8 RemoteBattle_PopChoice(struct RemoteChoice *choice)
     *choice = sIn[sInRead & (CHOICE_RING - 1)];
     sInRead++;
     sWaitFrames = 0;
+    HideBattleWait();
     return TRUE;
 }
 
 bool8 RemoteBattle_WaitTimedOut(void)
 {
-    return ++sWaitFrames >= REMOTE_WAIT_FRAMES;
+    ++sWaitFrames;
+    if (sWaitFrames == BATTLE_WAIT_SHOW_FRAMES && !sBattleWaitShown)
+    {
+        BattlePutTextOnWindow(sText_WaitingForPlayer, B_WIN_MSG);
+        sBattleWaitShown = TRUE;
+    }
+    if (sWaitFrames >= REMOTE_WAIT_FRAMES)
+    {
+        HideBattleWait();
+        return TRUE;
+    }
+    return FALSE;
 }
 
 void RemoteBattle_GiveUpOnRemote(void)
