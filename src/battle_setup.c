@@ -469,10 +469,30 @@ static void DoTrainerBattle(void)
 // as their game answers, or without them when it does not.
 static void Task_WaitForPartnerThenBattle(u8 taskId)
 {
+    s16 *data = gTasks[taskId].data;
+
+    if (data[0] == 0)
+    {
+        RemoteBattle_ShowWaiting(FALSE);
+        data[0] = 1;
+    }
     if (RemoteBattle_Yielded())
         return;     // this game joins the other player's fight instead
-    if (!RemoteBattle_AwaitingStartAck())
+    if (RemoteBattle_AwaitingStartAck())
+        return;
+    if (RemoteBattle_StartTimedOut())
     {
+        if (data[0] == 1)
+        {
+            RemoteBattle_ShowWaiting(TRUE);
+            data[0] = 2;
+            data[1] = 0;
+        }
+        if (++data[1] < 90)
+            return;
+    }
+    {
+        RemoteBattle_HideWaiting();
         DestroyTask(taskId);
         DoTrainerBattle();
     }

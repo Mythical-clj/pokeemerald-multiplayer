@@ -4,6 +4,9 @@
 #include "data.h"
 #include "load_save.h"
 #include "main.h"
+#include "menu.h"
+#include "text.h"
+#include "window.h"
 #include "pokemon.h"
 #include "remote_battle.h"
 #include "remote_player.h"
@@ -53,9 +56,9 @@ static void CB2_RemoteBattleDone(void);
 #define CHOICE_RESEND_FRAMES    10
 #define SYNC_PERIOD_FRAMES      15
 #define START_RESEND_FRAMES     20
-#define START_TIMEOUT_FRAMES    150
+#define START_TIMEOUT_FRAMES    600
 #define GUEST_ACCEPT_FRAMES     24      // acks sent before the guest's battle starts
-#define GUEST_PENDING_FRAMES    100     // how long the guest waits for a moment to join
+#define GUEST_PENDING_FRAMES    300     // how long the guest waits for a moment to join
 #define REMOTE_WAIT_FRAMES      3600    // contact lost: the remote battler plays itself
 
 #define ROLE_NONE   0
@@ -531,6 +534,38 @@ static EWRAM_DATA u8 sLastSession = 0;
 // gives up its own start and takes part as the guest, inside the script it
 // is already running, so the trainer's dialogue and flags play out as usual.
 static EWRAM_DATA bool8 sYielded = FALSE;
+static EWRAM_DATA bool8 sStartTimedOut = FALSE;
+static EWRAM_DATA bool8 sWaitShown = FALSE;
+
+static const u8 sText_WaitingForPlayer[] = _("Waiting for the other player...");
+static const u8 sText_NoReply[] = _("No reply. A computer partner\nwill take their place.");
+
+// The message box of the field, as the link rooms use while they wait.
+void RemoteBattle_ShowWaiting(bool8 noReply)
+{
+    if (!sWaitShown)
+    {
+        LoadMessageBoxAndBorderGfx();
+        DrawDialogueFrame(0, FALSE);
+        sWaitShown = TRUE;
+    }
+    FillWindowPixelBuffer(0, PIXEL_FILL(1));
+    AddTextPrinterParameterized(0, FONT_NORMAL, noReply ? sText_NoReply : sText_WaitingForPlayer, 0, 1, 0, NULL);
+    CopyWindowToVram(0, COPYWIN_FULL);
+}
+
+void RemoteBattle_HideWaiting(void)
+{
+    if (!sWaitShown)
+        return;
+    sWaitShown = FALSE;
+    ClearDialogWindowAndFrame(0, TRUE);
+}
+
+bool8 RemoteBattle_StartTimedOut(void)
+{
+    return sStartTimedOut;
+}
 static EWRAM_DATA u8 sCompSession = 0;
 static EWRAM_DATA u8 sCompParts = 0;
 static EWRAM_DATA u32 sCompSeed = 0;
@@ -1017,6 +1052,7 @@ static void TickHostStart(void)
     if (++sStartWait >= START_TIMEOUT_FRAMES)
     {
         // Nobody answered: the partner is played by the game.
+        sStartTimedOut = TRUE;
         sAwaitingAck = FALSE;
         gRemoteHumanBattle = FALSE;
         sRole = ROLE_NONE;
@@ -1118,6 +1154,7 @@ static void TickGuest(void)
     sStartParts = 0;
     sGuestAccepting = TRUE;
     sGuestAcceptAge = 0;
+    RemoteBattle_ShowWaiting(FALSE);
     LockPlayerFieldControls();
 }
 
@@ -1279,6 +1316,7 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     sRole = ROLE_NONE;
     sAwaitingAck = FALSE;
     sYielded = FALSE;
+    sStartTimedOut = FALSE;
     sMoneyBefore = gSaveBlock1Ptr->money;
 
     if (!REMOTE_BATTLE_ENABLED || !FindPartner(&slot) || !TrainerFitsPartnerBattle())
