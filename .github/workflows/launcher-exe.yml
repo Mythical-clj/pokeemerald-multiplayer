@@ -1,4 +1,4 @@
-name: Windows launcher
+name: Launcher (Windows and Mac)
 
 on:
   workflow_dispatch:
@@ -8,8 +8,11 @@ on:
       - '.github/workflows/launcher-exe.yml'
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,9 +25,9 @@ jobs:
       - name: Build
         run: >
           pyinstaller --onefile --name EmeraldLink
-          --paths sync/net
+          --paths sync/net --paths tools/launcher
           --hidden-import client --hidden-import usb_link --hidden-import ws_link
-          --hidden-import club_link --hidden-import protocol
+          --hidden-import club_link --hidden-import protocol --hidden-import owl_text
           --hidden-import usb.backend.libusb1
           --collect-all libusb_package
           tools/launcher/owl_launcher.py
@@ -34,3 +37,34 @@ jobs:
         with:
           name: EmeraldLink-windows
           path: dist/EmeraldLink.exe
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Get the sync project's client
+        run: git clone --depth 1 https://github.com/Mythical-clj/gen3-poke-multiplayer-overworld-sync.git sync
+      - name: Install build tools
+        run: pip install pyinstaller pyusb libusb-package
+      - name: Tk available
+        run: python -c "import tkinter; print(tkinter.TkVersion)"
+      - name: Build app
+        run: >
+          pyinstaller --windowed --name EmeraldLink
+          --paths sync/net --paths tools/launcher
+          --hidden-import client --hidden-import usb_link --hidden-import ws_link
+          --hidden-import club_link --hidden-import protocol --hidden-import owl_text
+          --hidden-import usb.backend.libusb1
+          --collect-all libusb_package
+          tools/launcher/owl_launcher.py
+      - name: Smoke test
+        run: dist/EmeraldLink.app/Contents/MacOS/EmeraldLink --run-client --help
+      - name: Zip
+        run: ditto -c -k --keepParent dist/EmeraldLink.app EmeraldLink-mac.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EmeraldLink-mac
+          path: EmeraldLink-mac.zip

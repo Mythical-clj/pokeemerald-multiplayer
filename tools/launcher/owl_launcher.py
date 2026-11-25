@@ -152,8 +152,9 @@ def gui():
     bar.pack(fill="x", padx=10, pady=8)
     btn = tk.Button(bar, text="Start", width=12, command=start)
     btn.pack(side="left")
-    tk.Button(bar, text="Adapter driver help (Zadig)",
-              command=lambda: webbrowser.open(ZADIG)).pack(side="left", padx=8)
+    if os.name == "nt":
+        tk.Button(bar, text="Adapter driver help (Zadig)",
+                  command=lambda: webbrowser.open(ZADIG)).pack(side="left", padx=8)
 
     def copy_log():
         root.clipboard_clear()
