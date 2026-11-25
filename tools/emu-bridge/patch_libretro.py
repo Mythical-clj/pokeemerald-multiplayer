@@ -34,7 +34,7 @@ c = open(cm).read()
 anchor = "\ttarget_link_libraries(${BINARY_NAME}_libretro ${OS_LIB})\n"
 assert c.count(anchor) == 1
 c = c.replace(anchor, anchor + """\tif(OWL_MBEDTLS_DIR)
-\t\tset(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+\t\tset(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)\n\t\tset(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 \t\tset(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 \t\tset(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
 \t\tset(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
