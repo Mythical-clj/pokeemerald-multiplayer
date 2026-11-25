@@ -293,6 +293,11 @@ static u8 LocalAvatarState(void)
 {
     u8 flags = gPlayerAvatar.flags;
 
+    // The HM pose (arm raised) is only a graphics swap on the local player.
+    if (gPlayerAvatar.objectEventId < OBJECT_EVENTS_COUNT
+     && gObjectEvents[gPlayerAvatar.objectEventId].graphicsId
+        == GetPlayerAvatarGraphicsIdByStateId(PLAYER_AVATAR_STATE_FIELD_MOVE))
+        return PLAYER_AVATAR_STATE_FIELD_MOVE;
     if (flags & PLAYER_AVATAR_FLAG_UNDERWATER)
         return PLAYER_AVATAR_STATE_UNDERWATER;
     if (flags & PLAYER_AVATAR_FLAG_SURFING)
@@ -627,7 +632,7 @@ static void SyncGraphics(u8 slotId)
     if (sAnimCount[slot->avatarState] >= 20)
         ObjectEventTurn(object, object->movementDirection);
     else
-        StartSpriteAnim(&gSprites[object->spriteId], 0);
+        StartSpriteAnim(&gSprites[object->spriteId], ANIM_FIELD_MOVE);
 }
 
 static void SyncBlob(u8 slotId)
