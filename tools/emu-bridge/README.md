@@ -13,7 +13,9 @@ Status: written, not compiled, not run.
        port=9000
        room=1
        peer=2          (a number no one else in the room uses)
-2. In mGBA's source: call `owl_bridge_attach(core, dir)` after loading the ROM
+2. Android (Thor): the `Android mGBA core` workflow builds a patched libretro core
+   for RetroArch (`mgba_libretro_android_arm64`). Put `owl.txt` in RetroArch's
+   saves folder. Other builds: in mGBA's source: call `owl_bridge_attach(core, dir)` after loading the ROM
    and `owl_bridge_frame(core)` once per frame (a `videoFrameEnded` core
    callback is enough). Add `owl_bridge.c` to the build.
 3. Everyone in a room must run the same ROM build (compare `build-sha1.txt`).
