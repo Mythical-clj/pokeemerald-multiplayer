@@ -7,7 +7,11 @@
 #include "party_menu.h"
 #include "pokedex.h"
 #include "pokemon.h"
+#include "constants/items.h"
+#include "constants/songs.h"
+#include "mail.h"
 #include "random.h"
+#include "sound.h"
 #include "record_mixing.h"
 #include "remote_battle.h"
 #include "remote_player.h"
@@ -24,18 +28,19 @@
 // 4-5 like every other event.
 // ---------------------------------------------------------------------------
 
-#define SUB_CHAT        1   // a = message number, b = part (0-2), data = 3 words
+#define SUB_MAIL        1   // a = mail number, b = part (0-2: three words each, 3: recipient tag)
 #define SUB_REQUEST     2   // a = SOCIAL_REQUEST_*, b = session
 #define SUB_REPLY       3   // a = 1 yes / 0 no, b = session
 #define SUB_CHUNK       4   // a = index, b = session, data = 6 bytes of a Pokémon (index OFFER_CHUNKS: checksum)
 #define SUB_CANCEL      5   // b = session
 #define SUB_OK          6   // b = session: "I accept the trade" / "I have your records"
+#define SUB_MAILACK     9   // a = mail number, b = 0 delivered / 1 mailbox full, data[0-1] = recipient tag
 #define SUB_MIXCHUNK    7   // a = index, b = session, data = 6 bytes of the record (index = chunk count: checksum)
 
 #define CHAT_WORDS          9
-#define CHAT_PARTS          3
-#define CHAT_REPEATS        3
-#define CHAT_REPEAT_FRAMES  10
+#define MAIL_PARTS          4
+#define MAIL_REPEATS        40      // sent again until acknowledged: about 7 s
+#define MAIL_REPEAT_FRAMES  10
 
 #define OFFER_CHUNKS    ((sizeof(struct Pokemon) + 5) / 6)
 #define OFFER_MESSAGES  (OFFER_CHUNKS + 1)
@@ -68,11 +73,12 @@ enum
     PHASE_CONFIRMED,    // I accepted the trade
 };
 
-struct ChatInbox
+struct MailInbox
 {
     u8 number;
     u8 gotMask;
-    u8 shownNumber;
+    u8 deliveredNumber;
+    u16 tag;
     u16 words[CHAT_WORDS];
 };
 
@@ -115,13 +121,13 @@ static EWRAM_DATA u8 sMixCursor = 0;
 static EWRAM_DATA bool8 sMixSending = FALSE;
 static EWRAM_DATA bool8 sHaveMix = FALSE;
 
-static EWRAM_DATA struct ChatInbox sInbox[REMOTE_MAX_PLAYERS] = {{0}};
+static EWRAM_DATA struct MailInbox sInbox[REMOTE_MAX_PLAYERS] = {{0}};
 static EWRAM_DATA u16 sChatOut[CHAT_WORDS] = {0};
-static EWRAM_DATA u8 sChatNumber = 0;
-static EWRAM_DATA u8 sChatRepeatsLeft = 0;
-static EWRAM_DATA u8 sChatSlotShown = 0;
-static EWRAM_DATA bool8 sChatPending = FALSE;
-static EWRAM_DATA u8 sChatText[160] = {0};
+static EWRAM_DATA u8 sMailNumber = 0;
+static EWRAM_DATA u8 sMailRepeatsLeft = 0;
+static EWRAM_DATA u8 sMailTarget = 0;
+static EWRAM_DATA u16 sMailTag = 0;
+static EWRAM_DATA u8 sMailResult = 0;       // 0 waiting, 1 delivered, 2 mailbox full
 
 void RemoteSocial_Init(void)
 {
@@ -131,14 +137,13 @@ void RemoteSocial_Init(void)
     sSessionCounter = Random() & 0xFF;
     sPhase = PHASE_NONE;
     sReplyRepeats = 0;
-    sChatRepeatsLeft = 0;
-    sChatPending = FALSE;
+    sMailRepeatsLeft = 0;
     sBattleReady = FALSE;
     for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
     {
         sInbox[i].number = 0;
         sInbox[i].gotMask = 0;
-        sInbox[i].shownNumber = 0;
+        sInbox[i].deliveredNumber = 0;
     }
 }
 
@@ -187,20 +192,41 @@ static void SendReplyMessage(void)
     Send(SUB_REPLY, sReplyValue, sSession, data);
 }
 
-static void SendChatParts(void)
+// A name's tag: both ends can work it out from the name alone.
+static u16 NameTag(const u8 *name)
+{
+    u16 tag = 0x1234;
+    u8 i;
+
+    for (i = 0; i < PLAYER_NAME_LENGTH && name[i] != EOS; i++)
+        tag = (u16)(tag * 31 + name[i]);
+    return tag;
+}
+
+static void SendMailParts(void)
 {
     u8 part;
     u8 data[6];
     u8 i;
 
-    for (part = 0; part < CHAT_PARTS; part++)
+    for (part = 0; part < MAIL_PARTS; part++)
     {
-        for (i = 0; i < 3; i++)
+        for (i = 0; i < 6; i++)
+            data[i] = 0;
+        if (part < 3)
         {
-            data[i * 2] = sChatOut[part * 3 + i] & 0xFF;
-            data[i * 2 + 1] = sChatOut[part * 3 + i] >> 8;
+            for (i = 0; i < 3; i++)
+            {
+                data[i * 2] = sChatOut[part * 3 + i] & 0xFF;
+                data[i * 2 + 1] = sChatOut[part * 3 + i] >> 8;
+            }
         }
-        Send(SUB_CHAT, sChatNumber, part, data);
+        else
+        {
+            data[0] = sMailTag & 0xFF;
+            data[1] = sMailTag >> 8;
+        }
+        Send(SUB_MAIL, sMailNumber, part, data);
     }
 }
 
@@ -259,27 +285,81 @@ static void Reset(void)
     ClearTrade();
 }
 
-static void StoreChat(u8 slot, u8 number, u8 part, const u8 *data)
+// Puts the mail in the first free place of the PC mailbox.
+static bool8 DeliverMail(u8 slot, const u16 *words)
 {
-    struct ChatInbox *inbox = &sInbox[slot];
+    u8 i;
+    const u8 *name = RemoteBattle_GetNameOfSlot(slot);
+
+    for (i = PARTY_SIZE; i < MAIL_COUNT; i++)
+    {
+        struct Mail *mail = &gSaveBlock1Ptr->mail[i];
+        u8 j;
+
+        if (mail->itemId != ITEM_NONE)
+            continue;
+        ClearMail(mail);
+        for (j = 0; j < CHAT_WORDS; j++)
+            mail->words[j] = words[j];
+        StringCopyN(mail->playerName, name != NULL ? name : gText_Friend, PLAYER_NAME_LENGTH);
+        mail->playerName[PLAYER_NAME_LENGTH] = EOS;
+        mail->itemId = ITEM_ORANGE_MAIL;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void SendMailAck(u8 number, u8 result, u16 tag)
+{
+    u8 reply[6];
     u8 i;
 
-    if (part >= CHAT_PARTS || number == 0 || number == inbox->shownNumber)
+    for (i = 0; i < 6; i++)
+        reply[i] = 0;
+    reply[0] = tag & 0xFF;
+    reply[1] = tag >> 8;
+    Send(SUB_MAILACK, number, result, reply);
+}
+
+static void StoreMail(u8 slot, u8 number, u8 part, const u8 *data)
+{
+    struct MailInbox *inbox = &sInbox[slot];
+    u8 i;
+
+    if (part >= MAIL_PARTS || number == 0)
         return;
     if (number != inbox->number)
     {
         inbox->number = number;
         inbox->gotMask = 0;
     }
-    for (i = 0; i < 3; i++)
-        inbox->words[part * 3 + i] = data[i * 2] | (data[i * 2 + 1] << 8);
-    inbox->gotMask |= 1 << part;
-    if (inbox->gotMask == (1 << CHAT_PARTS) - 1)
+    if (part < 3)
     {
-        inbox->shownNumber = number;
+        for (i = 0; i < 3; i++)
+            inbox->words[part * 3 + i] = data[i * 2] | (data[i * 2 + 1] << 8);
+    }
+    else
+    {
+        inbox->tag = data[0] | (data[1] << 8);
+    }
+    inbox->gotMask |= 1 << part;
+    if (inbox->gotMask == (1 << MAIL_PARTS) - 1)
+    {
         inbox->gotMask = 0;
-        sChatPending = TRUE;
-        sChatSlotShown = slot;
+        // Mail for somebody else in the room is none of our business.
+        if (inbox->tag != NameTag(gSaveBlock2Ptr->playerName))
+            return;
+        if (number != inbox->deliveredNumber)
+        {
+            if (!DeliverMail(slot, inbox->words))
+            {
+                SendMailAck(number, 1, inbox->tag);
+                return;
+            }
+            inbox->deliveredNumber = number;
+            PlaySE(SE_PIN);
+        }
+        SendMailAck(number, 0, inbox->tag);
     }
 }
 
@@ -378,8 +458,16 @@ void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
 
     switch (sub)
     {
-    case SUB_CHAT:
-        StoreChat(slot, a, b, data);
+    case SUB_MAIL:
+        StoreMail(slot, a, b, data);
+        break;
+    case SUB_MAILACK:
+        if (sMailRepeatsLeft != 0 && a == sMailNumber && slot == sMailTarget
+         && (data[0] | (data[1] << 8)) == sMailTag)
+        {
+            sMailResult = b == 0 ? 1 : 2;
+            sMailRepeatsLeft = 0;
+        }
         break;
     case SUB_REQUEST:
         if (b == sClosedSession && sState == ST_IDLE)
@@ -442,54 +530,14 @@ static bool8 OverworldIsFree(void)
         && gPlayerAvatar.tileTransitionState == T_NOT_MOVING;
 }
 
-static void BuildChatText(u8 slot)
-{
-    u8 *out = sChatText;
-    const u8 *name = RemoteBattle_GetNameOfSlot(slot);
-    u8 *lineStart;
-    u8 i;
-    u8 lines = 0;
-    u8 word[24];
-
-    out = StringCopy(out, name != NULL ? name : gText_Friend);
-    *out++ = CHAR_COLON;
-    *out++ = CHAR_NEWLINE;
-    lineStart = out;
-    for (i = 0; i < CHAT_WORDS; i++)
-    {
-        u16 w = sInbox[slot].words[i];
-        u8 length;
-
-        if (w == EC_EMPTY_WORD)
-            continue;
-        ConvertEasyChatWordsToString(word, &w, 1, 1);
-        length = StringLength(word);
-        if (length == 0)
-            continue;
-        if (out != lineStart && (out - lineStart) + 1 + length > 20)
-        {
-            lines++;
-            *out++ = (lines & 1) ? CHAR_PROMPT_SCROLL : CHAR_NEWLINE;
-            lineStart = out;
-        }
-        else if (out != lineStart)
-        {
-            *out++ = CHAR_SPACE;
-        }
-        out = StringCopy(out, word);
-    }
-    *out = EOS;
-    StringCopy(gStringVar4, sChatText);
-}
-
 void RemoteSocial_Tick(void)
 {
     sFrame++;
 
-    if (sChatRepeatsLeft != 0 && sFrame % CHAT_REPEAT_FRAMES == 0)
+    if (sMailRepeatsLeft != 0 && sFrame % MAIL_REPEAT_FRAMES == 0)
     {
-        SendChatParts();
-        sChatRepeatsLeft--;
+        SendMailParts();
+        sMailRepeatsLeft--;
     }
 
     if (sReplyRepeats != 0 && sFrame % REPLY_REPEAT_FRAMES == 0)
@@ -599,12 +647,6 @@ void RemoteSocial_Tick(void)
         break;
     }
 
-    if (sChatPending && OverworldIsFree())
-    {
-        sChatPending = FALSE;
-        BuildChatText(sChatSlotShown);
-        ScriptContext_SetupScript(RemoteSocial_EventScript_ShowChat);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -925,23 +967,56 @@ void RemoteSocial_ComposeChat(void)
     DoEasyChatScreen(EASY_CHAT_TYPE_MAIL, sChatOut, CB2_ReturnToFieldContinueScript, EASY_CHAT_PERSON_DISPLAY_NONE);
 }
 
-// After the screen: send what was written, if anything.
+// After the screen: send what was written to the player that was talked to.
 void RemoteSocial_SendChat(void)
 {
     u8 i;
     bool8 any = FALSE;
+    const u8 *name = RemoteBattle_GetNameOfSlot(sPeer);
 
     for (i = 0; i < CHAT_WORDS; i++)
     {
         if (sChatOut[i] != EC_EMPTY_WORD)
             any = TRUE;
     }
-    gSpecialVar_Result = any;
-    if (!any)
+    gSpecialVar_Result = any && name != NULL;
+    if (!gSpecialVar_Result)
         return;
-    sChatNumber++;
-    if (sChatNumber == 0)
-        sChatNumber = 1;
-    SendChatParts();
-    sChatRepeatsLeft = CHAT_REPEATS;
+    sMailNumber++;
+    if (sMailNumber == 0)
+        sMailNumber = 1;
+    sMailTarget = sPeer;
+    sMailTag = NameTag(name);
+    sMailResult = 0;
+    SendMailParts();
+    sMailRepeatsLeft = MAIL_REPEATS;
+}
+
+// Waits for the other game to say the mail is in its mailbox.
+static void Task_WaitMail(u8 taskId)
+{
+    if (JOY_NEW(B_BUTTON))
+    {
+        sMailRepeatsLeft = 0;
+        gSpecialVar_Result = 0;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+    else if (sMailResult != 0)
+    {
+        gSpecialVar_Result = sMailResult;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+    else if (sMailRepeatsLeft == 0)
+    {
+        gSpecialVar_Result = 0;
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+    }
+}
+
+void RemoteSocial_WaitMail(void)
+{
+    CreateTask(Task_WaitMail, 80);
 }

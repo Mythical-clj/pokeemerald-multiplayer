@@ -10,9 +10,7 @@ RemoteSocial_EventScript_Interact::
 	multichoice 0, 0, MULTI_REMOTE_SOCIAL, FALSE
 	switch VAR_RESULT
 	case 0, RemoteSocial_EventScript_AskBattle
-	case 1, RemoteSocial_EventScript_AskTrade
-	case 2, RemoteSocial_EventScript_Chat
-	case 3, RemoteSocial_EventScript_AskMix
+	case 1, RemoteSocial_EventScript_Mail
 	goto RemoteSocial_EventScript_Done
 	end
 
@@ -139,11 +137,29 @@ RemoteSocial_EventScript_TradeCancelled::
 	goto RemoteSocial_EventScript_Done
 	end
 
-RemoteSocial_EventScript_Chat::
+RemoteSocial_EventScript_Mail::
 	fadescreen FADE_TO_BLACK
 	special RemoteSocial_ComposeChat
 	fadescreen FADE_FROM_BLACK
 	special RemoteSocial_SendChat
+	goto_if_eq VAR_RESULT, FALSE, RemoteSocial_EventScript_Done
+	message RemoteSocial_Text_SendingMail
+	waitmessage
+	special RemoteSocial_WaitMail
+	closemessage
+	goto_if_eq VAR_RESULT, 1, RemoteSocial_EventScript_MailSent
+	goto_if_eq VAR_RESULT, 2, RemoteSocial_EventScript_MailFull
+	msgbox RemoteSocial_Text_MailFailed, MSGBOX_DEFAULT
+	goto RemoteSocial_EventScript_Done
+	end
+
+RemoteSocial_EventScript_MailSent::
+	msgbox RemoteSocial_Text_MailSent, MSGBOX_DEFAULT
+	goto RemoteSocial_EventScript_Done
+	end
+
+RemoteSocial_EventScript_MailFull::
+	msgbox RemoteSocial_Text_MailFull, MSGBOX_DEFAULT
 	goto RemoteSocial_EventScript_Done
 	end
 
@@ -180,11 +196,20 @@ RemoteSocial_EventScript_IncomingTrade::
 	goto RemoteSocial_EventScript_Done
 	end
 
-RemoteSocial_EventScript_ShowChat::
-	lockall
-	msgbox gStringVar4, MSGBOX_DEFAULT
-	goto RemoteSocial_EventScript_Done
-	end
+
+RemoteSocial_Text_SendingMail:
+	.string "Sending the mail to {STR_VAR_1}…\n"
+	.string "Press B to stop waiting.$"
+
+RemoteSocial_Text_MailSent:
+	.string "The mail is in {STR_VAR_1}'s\n"
+	.string "PC mailbox!$"
+
+RemoteSocial_Text_MailFull:
+	.string "{STR_VAR_1}'s mailbox is full.$"
+
+RemoteSocial_Text_MailFailed:
+	.string "The mail could not be delivered.$"
 
 RemoteSocial_Text_WhatToDo:
 	.string "What would you like to do with\n"

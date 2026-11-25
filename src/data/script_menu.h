@@ -783,17 +783,13 @@ struct MultichoiceListStruct
 };
 
 static const u8 sText_RemoteBattle[] = _("Battle");
-static const u8 sText_RemoteTrade[] = _("Trade");
-static const u8 sText_RemoteChat[] = _("Chat");
-static const u8 sText_RemoteMix[] = _("Mix records");
+static const u8 sText_RemoteMail[] = _("Send mail");
 static const u8 sText_RemoteCancel[] = _("Cancel");
 
 static const struct MenuAction MultichoiceList_RemoteSocial[] =
 {
     {sText_RemoteBattle},
-    {sText_RemoteTrade},
-    {sText_RemoteChat},
-    {sText_RemoteMix},
+    {sText_RemoteMail},
     {sText_RemoteCancel},
 };
 
