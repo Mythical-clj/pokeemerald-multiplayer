@@ -256,6 +256,7 @@ void RemotePlayer_Init(void)
         sSlots[i].qTail = 0;
     }
     RemoteBattle_Init();
+    RemoteSio_Init();
     sRxHead = sRxTail = 0;
     sTxHead = sTxTail = 0;
     sHavePlayerPos = FALSE;

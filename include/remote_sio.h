@@ -17,6 +17,10 @@
 #define REMOTE_PLAYER_SIO 1
 #endif
 
+// Detects an emulator and, if there is one, sets up the mailbox in place of
+// the serial port. Call once at start-up.
+void RemoteSio_Init(void);
+
 // Called every frame from the overworld; takes the port if the game is not
 // using it.
 void RemoteSio_Tick(void);

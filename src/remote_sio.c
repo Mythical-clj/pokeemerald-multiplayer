@@ -24,6 +24,31 @@
 
 #if REMOTE_PLAYER_SIO
 
+// Emulator mailbox. Under mGBA there is no adapter: a host program (a Lua
+// script on desktop, native code in an Android build) finds this struct by its
+// magic, drains tx[] into the network and fills rx[] from it. Producer and
+// consumer each move only their own index, so no locking is needed.
+#define MBOX_SLOTS      16
+#define MBOX_MAGIC      0x324D424Fu     // 'OMB2'
+#define MBOX_PER_VBLANK 4
+
+struct EmuMailbox
+{
+    vu32 magic;
+    vu32 txHead;        // written by the game
+    vu32 txTail;        // written by the host
+    u32 txSlots;
+    vu32 rxHead;        // written by the host
+    vu32 rxTail;        // written by the game
+    u32 rxSlots;
+    vu32 gameFrames;    // VBlank counter, so the host knows the game is alive
+    u8 tx[MBOX_SLOTS][12];
+    u8 rx[MBOX_SLOTS][12];
+};
+
+static EWRAM_DATA struct EmuMailbox sMailbox = {0};
+static EWRAM_DATA bool8 sEmulator = FALSE;
+
 enum
 {
     RX_WAIT_SYNC,
@@ -204,6 +229,69 @@ static void RxWord(u16 word)
     }
 }
 
+void RemoteSio_Init(void)
+{
+    u8 i;
+
+    sEmulator = FALSE;
+    // mGBA's debug register answers 0x1DEA once 0xC0DE is written to it;
+    // real hardware ignores the write and does not answer that.
+    *(vu16 *)0x04FFF780 = 0xC0DE;
+    if (*(vu16 *)0x04FFF780 != 0x1DEA)
+        return;
+
+    sEmulator = TRUE;
+    sMailbox.txHead = sMailbox.txTail = 0;
+    sMailbox.rxHead = sMailbox.rxTail = 0;
+    sMailbox.txSlots = MBOX_SLOTS;
+    sMailbox.rxSlots = MBOX_SLOTS;
+    sMailbox.gameFrames = 0;
+    for (i = 0; i < 12; i++)
+    {
+        sMailbox.tx[0][i] = 0;
+        sMailbox.rx[0][i] = 0;
+    }
+    sMailbox.magic = MBOX_MAGIC;    // last: the host looks for this
+}
+
+// Moves events between the game's rings and the mailbox.
+static void PumpMailbox(void)
+{
+    struct RemoteEvent event;
+    u8 n;
+    u8 i;
+
+    sMailbox.gameFrames++;
+
+    for (n = 0; n < MBOX_PER_VBLANK; n++)
+    {
+        u32 head = sMailbox.txHead;
+        u32 next = (head + 1) % MBOX_SLOTS;
+
+        if (next == sMailbox.txTail || !RemotePlayer_PopTx(&event))
+            break;
+        for (i = 0; i < 12; i++)
+            sMailbox.tx[head][i] = ((const u8 *)&event)[i];
+        sMailbox.txHead = next;
+    }
+
+    for (n = 0; n < MBOX_PER_VBLANK; n++)
+    {
+        u32 tail = sMailbox.rxTail;
+
+        if (tail == sMailbox.rxHead)
+            break;
+        for (i = 0; i < 12; i++)
+            ((u8 *)&event)[i] = sMailbox.rx[tail][i];
+        if (!RemotePlayer_PushRx(&event))
+        {
+            gRemoteSioRxDropped++;
+            break;
+        }
+        sMailbox.rxTail = (tail + 1) % MBOX_SLOTS;
+    }
+}
+
 void RemoteSio_OnSerialIrq(void)
 {
     if (!sOwned)
@@ -219,13 +307,19 @@ void RemoteSio_OnSerialIrq(void)
 void RemoteSio_Tick(void)
 {
     sIdleVBlanks = 0;
-    if (!sOwned && !sGameLinkOpen)
+    if (!sEmulator && !sOwned && !sGameLinkOpen)
         Acquire();
 }
 
 void RemoteSio_VBlank(void)
 {
     struct RemoteEvent event;
+
+    if (sEmulator)
+    {
+        PumpMailbox();
+        return;
+    }
 
     if (!sOwned)
         return;
@@ -280,6 +374,7 @@ void RemoteSio_GameLinkClosed(void)
 
 #else // !REMOTE_PLAYER_SIO
 
+void RemoteSio_Init(void) {}
 void RemoteSio_Tick(void) {}
 void RemoteSio_VBlank(void) {}
 void RemoteSio_OnSerialIrq(void) {}
