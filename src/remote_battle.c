@@ -217,6 +217,15 @@ static EWRAM_DATA bool8 sGuestAccepting = FALSE;
 static EWRAM_DATA bool8 sRemoteAI = FALSE;
 static EWRAM_DATA u16 sWaitFrames = 0;
 static EWRAM_DATA u16 sBattleFrame = 0;
+// A fingerprint of the battle at the start of each turn, kept for a few turns
+// so it can be compared with the other game's.
+#define HASH_TURNS 4
+static EWRAM_DATA u8 sHashTurn[HASH_TURNS] = {0};
+static EWRAM_DATA u16 sHashValue[HASH_TURNS] = {0};
+static EWRAM_DATA bool8 sHashUsed[HASH_TURNS] = {0};
+static EWRAM_DATA u8 sLastTurnSeen = 0xFF;
+static EWRAM_DATA u8 sLatestHashTurn = 0;
+static EWRAM_DATA bool8 sHaveHash = FALSE;
 static EWRAM_DATA struct RemoteChoice sOut[CHOICE_RING] = {0};
 static EWRAM_DATA u8 sOutNext = 0;           // number of the next choice to be made
 static EWRAM_DATA u8 sOutAcked = 0;          // choices before this one have arrived
@@ -543,6 +552,21 @@ static void HandleSyncMessage(const struct SyncMessage *msg)
     // Only an acknowledgement for choices that were really sent counts.
     if ((u8)(msg->ackN - sOutAcked) <= (u8)(sOutNext - sOutAcked))
         sOutAcked = msg->ackN;
+
+    // Both games must see the same battle at the start of every turn. If they
+    // do not, they have drifted apart: stop trusting the other game's choices.
+    if (msg->data[3] && gRemoteHumanBattle && !sRemoteAI)
+    {
+        u8 turn = msg->data[0];
+        u8 slot = turn % HASH_TURNS;
+
+        if (sHashUsed[slot] && sHashTurn[slot] == turn
+         && sHashValue[slot] != (msg->data[1] | (msg->data[2] << 8)))
+        {
+            sRemoteAI = TRUE;
+            PlaySE(SE_FAILURE);
+        }
+    }
 }
 
 static void HandleChoiceMessage(const struct ChoiceMessage *msg)
@@ -588,6 +612,8 @@ void RemoteBattle_HandleRx(const struct RemoteEvent *event)
 
 static void ResetChoiceRings(void)
 {
+    u8 i;
+
     sOutNext = 0;
     sOutAcked = 0;
     sResendCursor = 0;
@@ -595,6 +621,10 @@ static void ResetChoiceRings(void)
     sInRead = 0;
     sWaitFrames = 0;
     sRemoteAI = FALSE;
+    sLastTurnSeen = 0xFF;
+    sHaveHash = FALSE;
+    for (i = 0; i < HASH_TURNS; i++)
+        sHashUsed[i] = FALSE;
 }
 
 static void SendSync(void)
@@ -604,6 +634,13 @@ static void SendSync(void)
 
     for (i = 0; i < 6; i++)
         data[i] = 0;
+    if (sHaveHash)
+    {
+        data[0] = sLatestHashTurn;
+        data[1] = sHashValue[sLatestHashTurn % HASH_TURNS] & 0xFF;
+        data[2] = sHashValue[sLatestHashTurn % HASH_TURNS] >> 8;
+        data[3] = 1;
+    }
     PushMessage(REMOTE_EVENT_BSYNC, sRole == ROLE_GUEST, sInNext, sSession, data);
 }
 
@@ -759,6 +796,22 @@ void RemoteBattle_BattleTick(void)
         return;
 
     sBattleFrame++;
+    if (gBattleResults.battleTurnCounter != sLastTurnSeen && gBattlersCount == MAX_BATTLERS_COUNT)
+    {
+        u16 hash = gBattleResults.battleTurnCounter;
+        u8 i;
+        u8 slot;
+
+        for (i = 0; i < MAX_BATTLERS_COUNT; i++)
+            hash = hash * 31 + gBattleMons[i].hp + gBattleMons[i].species;
+        slot = gBattleResults.battleTurnCounter % HASH_TURNS;
+        sHashTurn[slot] = gBattleResults.battleTurnCounter;
+        sHashValue[slot] = hash;
+        sHashUsed[slot] = TRUE;
+        sLatestHashTurn = gBattleResults.battleTurnCounter;
+        sHaveHash = TRUE;
+        sLastTurnSeen = gBattleResults.battleTurnCounter;
+    }
     RemoteSio_Tick();
     RemotePlayer_DrainBattleRx();
     if (sBattleFrame % SYNC_PERIOD_FRAMES == 0)
