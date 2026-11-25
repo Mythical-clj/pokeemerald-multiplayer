@@ -503,7 +503,7 @@ static void HandleExpMessage(const struct ExpMessage *msg)
     ApplyAward(personality, species, exp);
 }
 
-static u8 sLastSession = 0;
+static EWRAM_DATA u8 sLastSession = 0;
 
 static void HandleStartMessage(u8 slot, const struct StartMessage *msg)
 {
