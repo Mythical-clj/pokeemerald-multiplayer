@@ -54,6 +54,7 @@ bool8 RemoteBattle_ShouldRematch(void);
 
 // While a human partner battle is waiting for the partner's game to accept.
 bool8 RemoteBattle_AwaitingStartAck(void);
+bool8 RemoteBattle_Yielded(void);
 
 // Battle side. Tick runs every frame of the battle.
 void RemoteBattle_BattleTick(void);

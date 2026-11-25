@@ -2105,6 +2105,9 @@ static void SplitTrainerPartyOverOpponents(void)
 
     for (i = 0; i < PARTY_SIZE; i++)
         whole[i] = gEnemyParty[i];
+    // A trainer with a single Pokémon sends out a copy for the second slot.
+    if (GetMonData(&whole[1], MON_DATA_SPECIES) == SPECIES_NONE)
+        whole[1] = whole[0];
     ZeroEnemyPartyMons();
     for (i = 0; i < PARTY_SIZE; i++)
         gEnemyParty[(i & 1) ? PARTY_SIZE / 2 + i / 2 : i / 2] = whole[i];

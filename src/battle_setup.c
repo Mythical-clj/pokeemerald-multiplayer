@@ -469,6 +469,8 @@ static void DoTrainerBattle(void)
 // as their game answers, or without them when it does not.
 static void Task_WaitForPartnerThenBattle(u8 taskId)
 {
+    if (RemoteBattle_Yielded())
+        return;     // this game joins the other player's fight instead
     if (!RemoteBattle_AwaitingStartAck())
     {
         DestroyTask(taskId);

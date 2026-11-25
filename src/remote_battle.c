@@ -67,6 +67,7 @@ static void CB2_RemoteBattleDone(void);
 #define CHOICE_ONE  3
 
 #define FLAG_SPLIT  1
+#define FLAG_REMATCH 2
 
 struct PartyChunk
 {
@@ -525,8 +526,86 @@ static void HandleExpMessage(const struct ExpMessage *msg)
 
 static EWRAM_DATA u8 sLastSession = 0;
 
+// Both players talked to the same trainer: each game starts as the host and
+// asks the other to join. The game with the lower seed stays host; the other
+// gives up its own start and takes part as the guest, inside the script it
+// is already running, so the trainer's dialogue and flags play out as usual.
+static EWRAM_DATA bool8 sYielded = FALSE;
+static EWRAM_DATA u8 sCompSession = 0;
+static EWRAM_DATA u8 sCompParts = 0;
+static EWRAM_DATA u32 sCompSeed = 0;
+static EWRAM_DATA u8 sCompHostTag = 0;
+static EWRAM_DATA u8 sCompGuestTag = 0;
+static EWRAM_DATA u16 sCompTrainerA = 0;
+static EWRAM_DATA u16 sCompTrainerB = 0;
+static EWRAM_DATA u8 sCompFlags = 0;
+
+bool8 RemoteBattle_Yielded(void)
+{
+    return sYielded;
+}
+
+static void HandleCompetingStart(u8 slot, const struct StartMessage *msg)
+{
+    if (msg->session == 0 || slot != sPartnerSlot)
+        return;
+    if (msg->session != sCompSession)
+    {
+        sCompSession = msg->session;
+        sCompParts = 0;
+    }
+    if (msg->part == 0)
+    {
+        sCompSeed = msg->data[0] | (msg->data[1] << 8) | (msg->data[2] << 16) | ((u32)msg->data[3] << 24);
+        sCompHostTag = msg->data[4];
+        sCompGuestTag = msg->data[5];
+        sCompParts |= 1;
+    }
+    else if (msg->part == 1)
+    {
+        sCompTrainerA = msg->data[0] | (msg->data[1] << 8);
+        sCompTrainerB = msg->data[2] | (msg->data[3] << 8);
+        sCompFlags = msg->data[4];
+        sCompParts |= 2;
+    }
+    if (sCompParts != 3)
+        return;
+
+    // The same trainer, the same teams, and the other game's seed is lower.
+    if (sCompTrainerA != sTrainerA || sCompTrainerB != sTrainerB)
+        return;
+    if (sCompGuestTag != sSendTag || sCompHostTag != sGuestTag || !sSendValid)
+        return;
+    if (sCompSeed >= sSeed)
+        return;
+
+    // Undo the host's setup and become the guest of the other game's battle.
+    LoadPlayerParty();
+    CalculatePlayerPartyCount();
+    sAwaitingAck = FALSE;
+    gRemoteBattleActive = FALSE;
+    gRemoteHumanBattle = FALSE;
+    sRole = ROLE_NONE;
+    sYielded = TRUE;
+
+    sSeed = sCompSeed;
+    sHostTag = sCompHostTag;
+    sGuestTag = sCompGuestTag;
+    sStartFlags = sCompFlags;
+    sStartSession = sCompSession;
+    sStartSlot = slot;
+    sGuestPendingAge = 0;
+    sStartParts = 3;
+    sCompParts = 0;
+}
+
 static void HandleStartMessage(u8 slot, const struct StartMessage *msg)
 {
+    if (sRole == ROLE_HOST && sAwaitingAck && !sStartAcked && gRemoteHumanBattle)
+    {
+        HandleCompetingStart(slot, msg);
+        return;
+    }
     if (sRole != ROLE_NONE || gMain.inBattle || gRemoteBattleActive)
         return;
     if (msg->session == 0 || msg->session == sLastSession)
@@ -948,7 +1027,10 @@ static bool8 GuestCanJoin(void)
 {
     struct PeerTeam *peer = &sPeers[sStartSlot];
 
-    if (gMain.inBattle || ArePlayerFieldControlsLocked() || ScriptContext_IsEnabled())
+    if (gMain.inBattle)
+        return FALSE;
+    // A game that was already starting the same fight is inside a script.
+    if (!sYielded && (ArePlayerFieldControlsLocked() || ScriptContext_IsEnabled()))
         return FALSE;
     if (gPlayerAvatar.tileTransitionState != T_NOT_MOVING)
         return FALSE;
@@ -970,6 +1052,7 @@ static void StartGuestBattle(void)
     gBattleTypeFlags = BATTLE_TYPE_TRAINER | BATTLE_TYPE_DOUBLE | BATTLE_TYPE_TWO_OPPONENTS
                      | BATTLE_TYPE_MULTI | BATTLE_TYPE_INGAME_PARTNER;
     gRemoteSplitTrainer = (sStartFlags & FLAG_SPLIT) != 0;
+    sRematch = (sStartFlags & FLAG_REMATCH) != 0;
 
     // The same battle party as the host's: their team in front, mine behind.
     SavePlayerParty();
@@ -995,9 +1078,12 @@ static void StartGuestBattle(void)
     gRemoteHumanBattle = TRUE;
     ResetChoiceRings();
     sMoneyBefore = gSaveBlock1Ptr->money;
-    sRealCallback = NULL;
-    gMain.savedCallback = CB2_RemoteBattleDone;
-    sWrapped = TRUE;
+    if (!sYielded)
+    {
+        sRealCallback = NULL;
+        gMain.savedCallback = CB2_RemoteBattleDone;
+        sWrapped = TRUE;
+    }
     BattleSetup_StartRemoteGuestBattle();
 }
 
@@ -1018,7 +1104,7 @@ static void TickGuest(void)
 
     if (sRole != ROLE_NONE || sStartParts != 3)
         return;
-    if (++sGuestPendingAge > GUEST_PENDING_FRAMES)
+    if (!sYielded && ++sGuestPendingAge > GUEST_PENDING_FRAMES)
     {
         sStartParts = 0;
         return;
@@ -1099,7 +1185,7 @@ static bool8 TrainerFitsPartnerBattle(void)
         return TRUE;
     if (gTrainerBattleOpponent_A == 0 || gTrainerBattleOpponent_A == TRAINER_SECRET_BASE)
         return FALSE;
-    return gTrainers[gTrainerBattleOpponent_A].partySize >= 2;
+    return gTrainers[gTrainerBattleOpponent_A].partySize >= 1;
 }
 
 bool8 RemoteBattle_ShouldRematch(void)
@@ -1110,8 +1196,6 @@ bool8 RemoteBattle_ShouldRematch(void)
     if (!REMOTE_BATTLE_ENABLED)
         return FALSE;
     if (gTrainerBattleOpponent_A == 0 || gTrainerBattleOpponent_A == TRAINER_SECRET_BASE)
-        return FALSE;
-    if (gTrainers[gTrainerBattleOpponent_A].partySize < 2 && gTrainerBattleOpponent_B == 0)
         return FALSE;
     if (!FindPartner(&slot) || BuildMyTeam(pick) == 0)
         return FALSE;
@@ -1148,10 +1232,10 @@ static void CB2_RemoteBattleDone(void)
         }
     }
 
-    if (sRematch || guest)
+    if (sRematch)
     {
-        // A battle against a trainer already beaten, or fought as the guest,
-        // pays nothing.
+        // A battle against a trainer already beaten pays nothing; a first
+        // fight pays both players.
         if (gSaveBlock1Ptr->money > sMoneyBefore)
             gSaveBlock1Ptr->money = sMoneyBefore;
         sRematch = FALSE;
@@ -1165,7 +1249,13 @@ static void CB2_RemoteBattleDone(void)
     sLockedSlot = REMOTE_MAX_PLAYERS;
     sWrapped = FALSE;
 
-    if (guest)
+    if (sYielded)
+    {
+        // This game was inside the trainer's script: carry on with it.
+        sYielded = FALSE;
+        SetMainCallback2(sRealCallback);
+    }
+    else if (guest)
     {
         UnlockPlayerFieldControls();
         SetMainCallback2(gBattleOutcome == B_OUTCOME_WON ? CB2_ReturnToField : CB2_WhiteOut);
@@ -1188,6 +1278,7 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
     gRemoteHumanBattle = FALSE;
     sRole = ROLE_NONE;
     sAwaitingAck = FALSE;
+    sYielded = FALSE;
     sMoneyBefore = gSaveBlock1Ptr->money;
 
     if (!REMOTE_BATTLE_ENABLED || !FindPartner(&slot) || !TrainerFitsPartnerBattle())
@@ -1252,7 +1343,7 @@ bool8 RemoteBattle_PrepareTrainerBattle(void)
         sGuestTag = peer->readyTag;
         sTrainerA = gTrainerBattleOpponent_A;
         sTrainerB = gTrainerBattleOpponent_B;
-        sStartFlags = gRemoteSplitTrainer ? FLAG_SPLIT : 0;
+        sStartFlags = (gRemoteSplitTrainer ? FLAG_SPLIT : 0) | (sRematch ? FLAG_REMATCH : 0);
         sPartnerSlot = slot;
         sStartAcked = FALSE;
         sStartWait = 0;
