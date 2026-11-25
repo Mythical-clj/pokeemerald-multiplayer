@@ -9,6 +9,13 @@
 //   [0xA55A][type<<8 | wordCount][words...][checksum]
 // where the checksum makes the 16-bit sum of header, data and checksum zero.
 //
+// Cable mode (no adapter): the consoles themselves form the Multi-Player bus
+// (2 to 4 GBAs). The one on the master end of the cable paces the exchanges
+// with Timer 3 and sends its frames as type 2; the others send type 1. Every
+// console reads all four lanes, and frames from a console are stamped with
+// the sender's slot by the receiver (slots count the other players only).
+// The adapter, when there is one, is lane 0 and stamps its own frames.
+//
 // The port belongs to the game's own link code whenever that is open
 // (Cable Club, trading, link battles, wireless). This driver only holds it
 // while the overworld is running and gives it back otherwise.

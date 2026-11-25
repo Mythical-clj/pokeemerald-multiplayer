@@ -6,7 +6,10 @@
 
 #define SIO_FRAME_SYNC      0xA55A
 #define SIO_WORD_IDLE       0x7FFF  // neither 0x0000 (dropped by the firmware) nor 0xFFFF (idle line)
-#define SIO_TYPE_EVENT      0x01
+#define SIO_TYPE_EVENT      0x01    // from the adapter: the sender slot is already stamped
+#define SIO_TYPE_CABLE      0x02    // from a console on the cable: the receiver stamps the slot
+#define SIO_LANES           4
+#define CABLE_TIMER_RELOAD  (-197)  // 64 cycles each: the master waits about 0.75 ms between exchanges
 #define SIO_MAX_WORDS       8
 #define EVENT_WORDS         (sizeof(struct RemoteEvent) / 2)
 
@@ -65,12 +68,19 @@ static EWRAM_DATA u16 sSilentVBlanks = 0;
 static EWRAM_DATA vu32 sIrqCount = 0;
 static EWRAM_DATA u32 sLastIrqCount = 0;
 
-static EWRAM_DATA u8 sRxPhase = 0;
-static EWRAM_DATA u8 sRxType = 0;
-static EWRAM_DATA u8 sRxCount = 0;
-static EWRAM_DATA u8 sRxGot = 0;
-static EWRAM_DATA u16 sRxSum = 0;
-static EWRAM_DATA u16 sRxBuf[SIO_MAX_WORDS] = {0};
+// Cable mode: with no adapter the consoles are the Multi-Player bus. The one
+// on the master end of the cable starts every exchange; all of them send a
+// word in their own lane and every console sees all four lanes.
+static EWRAM_DATA bool8 sIsMaster = FALSE;
+static EWRAM_DATA u8 sMyId = 0;
+
+// One frame parser per lane.
+static EWRAM_DATA u8 sRxPhase[SIO_LANES] = {0};
+static EWRAM_DATA u8 sRxType[SIO_LANES] = {0};
+static EWRAM_DATA u8 sRxCount[SIO_LANES] = {0};
+static EWRAM_DATA u8 sRxGot[SIO_LANES] = {0};
+static EWRAM_DATA u16 sRxSum[SIO_LANES] = {0};
+static EWRAM_DATA u16 sRxBuf[SIO_LANES][SIO_MAX_WORDS] = {{0}};
 
 static EWRAM_DATA u16 sTxBuf[SIO_MAX_WORDS + 3] = {0};
 static EWRAM_DATA vu8 sTxLen = 0;
@@ -108,6 +118,67 @@ static u16 NextWord(void)
     return SIO_WORD_IDLE;
 }
 
+static void StopCableTimer(void)
+{
+    REG_TM3CNT_H &= ~TIMER_ENABLE;
+}
+
+static void StartCableTimer(void)
+{
+    REG_TM3CNT_H &= ~TIMER_ENABLE;
+    REG_TM3CNT_L = CABLE_TIMER_RELOAD;
+    REG_TM3CNT_H = TIMER_64CLK | TIMER_INTR_ENABLE | TIMER_ENABLE;
+}
+
+// The master's pacing: one exchange per tick, started only when every console
+// on the cable is in Multi-Player mode (SD high) and the last one is over.
+static void CableTimerIntr(void)
+{
+    StopCableTimer();
+    if (sOwned && !(REG_SIOCNT & SIO_START) && (REG_SIOCNT & SIO_MULTI_SD))
+        REG_SIOCNT |= SIO_START;
+    else
+        StartCableTimer();
+}
+
+static void BecomeMaster(void)
+{
+    sIsMaster = TRUE;
+    gIntrTable[2] = CableTimerIntr;
+    EnableInterrupts(INTR_FLAG_TIMER3);
+    StartCableTimer();
+}
+
+static void StopMaster(void)
+{
+    if (!sIsMaster)
+        return;
+    sIsMaster = FALSE;
+    StopCableTimer();
+    DisableInterrupts(INTR_FLAG_TIMER3);
+    RestoreSerialTimer3IntrHandlers();
+}
+
+// The console on the master end of the cable sees SD high and SI low. With an
+// adapter, or on a slave end, SI is high and nothing is started from here.
+static void UpdateRole(void)
+{
+    bool8 master = (REG_SIOCNT & (SIO_MULTI_SD | SIO_MULTI_SI)) == SIO_MULTI_SD;
+
+    if (master && !sIsMaster)
+        BecomeMaster();
+    else if (!master && sIsMaster)
+        StopMaster();
+}
+
+static void ResetParsers(void)
+{
+    u8 i;
+
+    for (i = 0; i < SIO_LANES; i++)
+        sRxPhase[i] = RX_WAIT_SYNC;
+}
+
 static void ArmSerial(void)
 {
     // The game may have left its own callback behind after closing a link.
@@ -115,8 +186,9 @@ static void ArmSerial(void)
     REG_RCNT = 0;
     REG_SIOCNT = SIOCNT_CONFIG;
     REG_SIOMLT_SEND = PeekWord();
-    sRxPhase = RX_WAIT_SYNC;
+    ResetParsers();
     EnableInterrupts(INTR_FLAG_SERIAL);
+    UpdateRole();
 }
 
 static void Acquire(void)
@@ -138,6 +210,7 @@ static void Release(void)
     if (!sOwned)
         return;
     sOwned = FALSE;
+    StopMaster();
     if (!sGameLinkOpen)
     {
         DisableInterrupts(INTR_FLAG_SERIAL);
@@ -149,7 +222,7 @@ static void Release(void)
 static bool8 SendEventFrame(const struct RemoteEvent *event)
 {
     const u16 *words = (const u16 *)event;
-    u16 head = (SIO_TYPE_EVENT << 8) | EVENT_WORDS;
+    u16 head = ((sIsMaster ? SIO_TYPE_CABLE : SIO_TYPE_EVENT) << 8) | EVENT_WORDS;
     u16 sum = head;
     u8 i;
 
@@ -169,62 +242,74 @@ static bool8 SendEventFrame(const struct RemoteEvent *event)
     return TRUE;
 }
 
-static void DeliverFrame(void)
+static void DeliverFrame(u8 lane)
 {
     struct RemoteEvent event;
     u8 *dst = (u8 *)&event;
-    const u8 *src = (const u8 *)sRxBuf;
+    const u8 *src = (const u8 *)sRxBuf[lane];
     u8 i;
 
-    if (sRxType != SIO_TYPE_EVENT || sRxCount != EVENT_WORDS)
+    if (sRxCount[lane] != EVENT_WORDS
+     || (sRxType[lane] != SIO_TYPE_EVENT && sRxType[lane] != SIO_TYPE_CABLE))
         return;     // not ours; ignore without counting it as a fault
 
     for (i = 0; i < sizeof(event); i++)
         dst[i] = src[i];
+
+    // The adapter (lane 0, type 1) has stamped the sender already. Anything
+    // else comes from a console: its slot is its lane, counted without ours.
+    if (!(lane == 0 && sRxType[lane] == SIO_TYPE_EVENT))
+    {
+        u8 slot = lane < sMyId ? lane : lane - 1;
+
+        if (slot >= REMOTE_MAX_PLAYERS)
+            return;
+        event.type = (event.type & 0x0F) | (slot << 4);
+    }
     if (!RemotePlayer_PushRx(&event))
         gRemoteSioRxDropped++;
 }
 
-static void RxWord(u16 word)
+static void RxWord(u8 lane, u16 word)
 {
-    switch (sRxPhase)
+    switch (sRxPhase[lane])
     {
     case RX_WAIT_SYNC:
         // Idle words and noise are ignored: the line is mostly at rest.
         if (word == SIO_FRAME_SYNC)
-            sRxPhase = RX_WAIT_HEAD;
+            sRxPhase[lane] = RX_WAIT_HEAD;
         break;
     case RX_WAIT_HEAD:
-        sRxType = word >> 8;
-        sRxCount = word & 0xFF;
-        if (sRxCount > SIO_MAX_WORDS || sRxType == 0)
+        sRxType[lane] = word >> 8;
+        sRxCount[lane] = word & 0xFF;
+        if (sRxCount[lane] > SIO_MAX_WORDS || sRxType[lane] == 0)
         {
             // The sync word was a coincidence; look for the next one.
             gRemoteSioFrameErrors++;
-            sRxPhase = RX_WAIT_SYNC;
+            sRxPhase[lane] = RX_WAIT_SYNC;
             break;
         }
-        sRxGot = 0;
-        sRxSum = word;
-        sRxPhase = sRxCount != 0 ? RX_DATA : RX_CHECKSUM;
+        sRxGot[lane] = 0;
+        sRxSum[lane] = word;
+        sRxPhase[lane] = sRxCount[lane] != 0 ? RX_DATA : RX_CHECKSUM;
         break;
     case RX_DATA:
-        sRxBuf[sRxGot++] = word;
-        sRxSum += word;
-        if (sRxGot >= sRxCount)
-            sRxPhase = RX_CHECKSUM;
+        sRxBuf[lane][sRxGot[lane]++] = word;
+        sRxSum[lane] += word;
+        if (sRxGot[lane] >= sRxCount[lane])
+            sRxPhase[lane] = RX_CHECKSUM;
         break;
     case RX_CHECKSUM:
-        if ((u16)(sRxSum + word) != 0)
+        if ((u16)(sRxSum[lane] + word) != 0)
         {
             gRemoteSioFrameErrors++;
         }
         else
         {
             gRemoteSioFramesRx++;
-            DeliverFrame();
+            DeliverFrame(lane);
         }
-        sRxPhase = RX_WAIT_SYNC;
+        sRxPhase[lane] = RX_WAIT_SYNC;
         break;
     }
 }
@@ -294,14 +379,26 @@ static void PumpMailbox(void)
 
 void RemoteSio_OnSerialIrq(void)
 {
+    u8 lane;
+
     if (!sOwned)
         return;
 
     sIrqCount++;
-    // The adapter is the master, so its word is in the first slot.
-    RxWord(REG_SIOMULTI0);
+    sMyId = (REG_SIOCNT & SIO_ID) >> 4;
+    // Every console sees all four lanes. With an adapter it is the master in
+    // lane 0; with a cable the other consoles are in theirs. Our own lane
+    // only echoes what we sent (the console in lane 0 of an adapter is not us).
+    for (lane = 0; lane < SIO_LANES; lane++)
+    {
+        if (sIsMaster ? lane == 0 : (lane == sMyId && lane != 0))
+            continue;
+        RxWord(lane, REG_SIOMULTI(lane));
+    }
     // Load the next word now: the master may start again at any moment.
     REG_SIOMLT_SEND = NextWord();
+    if (sIsMaster)
+        StartCableTimer();
 }
 
 void RemoteSio_Tick(void)
@@ -334,6 +431,11 @@ void RemoteSio_VBlank(void)
     if (sTxLen == 0 && RemotePlayer_PopTx(&event))
         SendEventFrame(&event);
 
+    UpdateRole();
+    // The master's pacing timer stops after every exchange; make sure it runs.
+    if (sIsMaster && !(REG_TM3CNT_H & TIMER_ENABLE) && !(REG_SIOCNT & SIO_START))
+        StartCableTimer();
+
     // Something else rewrote the port configuration: take it back.
     if (++sGuardTimer >= GUARD_PERIOD_VBLANKS)
     {
@@ -365,6 +467,7 @@ void RemoteSio_GameLinkOpened(void)
     sGameLinkOpen = TRUE;
     // The game has just reconfigured the port: it is already its own.
     sOwned = FALSE;
+    StopMaster();
 }
 
 void RemoteSio_GameLinkClosed(void)
