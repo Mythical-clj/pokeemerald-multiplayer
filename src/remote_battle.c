@@ -599,8 +599,11 @@ static void ResetChoiceRings(void)
 
 static void SendSync(void)
 {
-    u8 data[6] = {0, 0, 0, 0, 0, 0};
+    u8 data[6];
+    u8 i;
 
+    for (i = 0; i < 6; i++)
+        data[i] = 0;
     PushMessage(REMOTE_EVENT_BSYNC, sRole == ROLE_GUEST, sInNext, sSession, data);
 }
 
