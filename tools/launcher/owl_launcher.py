@@ -13,6 +13,8 @@ import sys
 import threading
 import webbrowser
 
+import owl_text
+
 DEFAULT_RELAY = "wss://gbcatrade.wired-ariel.it/ws"
 SETTINGS = os.path.join(os.path.expanduser("~"), ".owl_launcher.json")
 ZADIG = "https://zadig.akeo.ie/"
@@ -59,7 +61,7 @@ def gui():
     st = load_settings()
     root = tk.Tk()
     root.title("Emerald Multiplayer Link")
-    root.geometry("640x460")
+    root.geometry("680x560")
 
     fields = {}
     form = tk.Frame(root)
@@ -73,7 +75,12 @@ def gui():
         tk.Entry(form, textvariable=var, width=48).grid(row=row, column=1, padx=6, pady=2)
         fields[key] = var
 
-    log = scrolledtext.ScrolledText(root, height=18, state="disabled")
+    health = owl_text.Health()
+    summary = tk.StringVar(value="\n".join(health.summary()))
+    tk.Label(root, textvariable=summary, justify="left", anchor="w",
+             font=("Consolas", 10), relief="groove").pack(fill="x", padx=10, pady=4)
+
+    log = scrolledtext.ScrolledText(root, height=14, state="disabled")
     log.pack(fill="both", expand=True, padx=10, pady=4)
     status = tk.StringVar(value="Stopped")
     tk.Label(root, textvariable=status, anchor="w").pack(fill="x", padx=10)
@@ -114,6 +121,7 @@ def gui():
                              text=True, encoding="utf-8", errors="replace",
                              env=env, creationflags=flags)
         proc["p"] = p
+        health.__init__()
         threading.Thread(target=reader, args=(p,), daemon=True).start()
         status.set("Running: room %d, player %d" % (room, peer))
         btn.configure(text="Stop", command=stop)
@@ -132,7 +140,9 @@ def gui():
                     status.set("Stopped")
                     btn.configure(text="Start", command=start)
                 else:
-                    append(item)
+                    health.feed(item)
+                    summary.set("\n".join(health.summary()))
+                    append(owl_text.translate(item))
         except queue.Empty:
             pass
         root.after(100, poll)
@@ -143,6 +153,12 @@ def gui():
     btn.pack(side="left")
     tk.Button(bar, text="Adapter driver help (Zadig)",
               command=lambda: webbrowser.open(ZADIG)).pack(side="left", padx=8)
+
+    def copy_log():
+        root.clipboard_clear()
+        root.clipboard_append(log.get("1.0", "end"))
+        status.set("Log copied to the clipboard")
+    tk.Button(bar, text="Copy log", command=copy_log).pack(side="left")
 
     def on_close():
         stop()
