@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_setup.h"
 #include "battle_transition.h"
@@ -1238,8 +1239,17 @@ bool8 GetTrainerFlag(void)
         return GetBattlePyramidTrainerFlag(gSelectedObjectEvent);
     else if (InTrainerHill())
         return GetHillTrainerFlag(gSelectedObjectEvent);
+    else if (FlagGet(GetTrainerAFlag()))
+        return !RemoteBattle_ShouldRematch();
     else
-        return FlagGet(GetTrainerAFlag());
+        return FALSE;
+}
+
+// One trainer plays both opponents of a partner battle: B says what A says.
+void BattleSetup_CopyTrainerAToB(void)
+{
+    sTrainerBIntroSpeech = sTrainerAIntroSpeech;
+    sTrainerBDefeatSpeech = sTrainerADefeatSpeech;
 }
 
 static void SetBattledTrainersFlags(void)
@@ -1319,7 +1329,10 @@ void BattleSetup_StartTrainerBattle(void)
     if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE || InTrainerHillChallenge())
         DoBattlePyramidTrainerHillBattle();
     else
+    {
+        RemoteBattle_PrepareTrainerBattle();
         DoTrainerBattle();
+    }
 
     ScriptContext_Stop();
 }

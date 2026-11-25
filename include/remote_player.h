@@ -59,6 +59,14 @@ void RemotePlayer_Tick(void);
 bool8 RemotePlayer_PushRx(const struct RemoteEvent *event);
 bool8 RemotePlayer_PopTx(struct RemoteEvent *event);
 
+// Used by the battle module: a spare transmit slot, the next sequence number,
+// whether the ghost (no real peer) is standing in, and where the remotes are.
+bool8 RemotePlayer_TryPushTx(const struct RemoteEvent *event);
+u8 RemotePlayer_NextTxSeq(void);
+bool8 RemotePlayer_InLoopback(void);
+bool8 RemotePlayer_SlotIsNear(u8 slot, u8 maxDistance, u8 *gender);
+bool8 RemotePlayer_FindNearby(u8 maxDistance, u8 *slot, u8 *gender);
+
 // Overwrites a save-file object event slot so it looks never used.
 void ClearRemotePlayerSaveEntry(struct ObjectEvent *entry);
 

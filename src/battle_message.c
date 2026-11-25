@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_anim.h"
 #include "battle_controllers.h"
@@ -2723,9 +2724,18 @@ u32 BattleStringExpandPlaceholders(const u8 *src, u8 *dst)
                 }
                 break;
             case B_TXT_PARTNER_CLASS:
-                toCpy = gTrainerClassNames[GetFrontierOpponentClass(gPartnerTrainerId)];
+                if (gRemoteBattleActive)
+                    toCpy = gTrainerClassNames[RemoteBattle_GetPartnerBackPic() == TRAINER_BACK_PIC_MAY
+                                               ? TRAINER_CLASS_PKMN_TRAINER_2 : TRAINER_CLASS_PKMN_TRAINER_1];
+                else
+                    toCpy = gTrainerClassNames[GetFrontierOpponentClass(gPartnerTrainerId)];
                 break;
             case B_TXT_PARTNER_NAME:
+                if (gRemoteBattleActive)
+                {
+                    toCpy = RemoteBattle_GetPartnerName();
+                    break;
+                }
                 GetFrontierTrainerName(text, gPartnerTrainerId);
                 toCpy = text;
                 break;

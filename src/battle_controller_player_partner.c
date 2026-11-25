@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"
 #include "battle_anim.h"
@@ -1300,7 +1301,7 @@ static void PlayerPartnerHandleDrawTrainerPic(void)
 
     if (gPartnerTrainerId == TRAINER_STEVEN_PARTNER)
     {
-        trainerPicId = TRAINER_BACK_PIC_STEVEN;
+        trainerPicId = RemoteBattle_GetPartnerBackPic();
         xPos = 90;
         yPos = (8 - gTrainerBackPicCoords[trainerPicId].size) * 4 + 80;
     }
@@ -1793,7 +1794,7 @@ static void PlayerPartnerHandleIntroTrainerBallThrow(void)
     paletteNum = AllocSpritePalette(0xD6F9);
     if (gPartnerTrainerId == TRAINER_STEVEN_PARTNER)
     {
-        u8 spriteId = TRAINER_BACK_PIC_STEVEN;
+        u8 spriteId = RemoteBattle_GetPartnerBackPic();
         LoadCompressedPalette(gTrainerBackPicPaletteTable[spriteId].data, OBJ_PLTT_ID(paletteNum), PLTT_SIZE_4BPP);
     }
     else

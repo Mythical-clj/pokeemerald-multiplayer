@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "malloc.h"
 #include "apprentice.h"
 #include "battle.h"
@@ -6750,7 +6751,11 @@ const u8 *GetTrainerPartnerName(void)
 {
     if (gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER)
     {
-        if (gPartnerTrainerId == TRAINER_STEVEN_PARTNER)
+        if (gRemoteBattleActive)
+        {
+            return RemoteBattle_GetPartnerName();
+        }
+        else if (gPartnerTrainerId == TRAINER_STEVEN_PARTNER)
         {
             return gTrainers[TRAINER_STEVEN].trainerName;
         }

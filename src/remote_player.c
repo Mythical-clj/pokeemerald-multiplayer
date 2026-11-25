@@ -5,6 +5,7 @@
 #include "field_player_avatar.h"
 #include "fieldmap.h"
 #include "main.h"
+#include "remote_battle.h"
 #include "remote_player.h"
 #include "remote_sio.h"
 #include "sprite.h"
@@ -194,6 +195,31 @@ bool8 RemotePlayer_PushRx(const struct RemoteEvent *event)
     return TRUE;
 }
 
+bool8 RemotePlayer_TryPushTx(const struct RemoteEvent *event)
+{
+    u8 used = (sTxHead + RING_LEN - sTxTail) % RING_LEN;
+
+    // Walking events come first: only use the ring while it is mostly empty.
+    if (used >= RING_LEN / 2)
+        return FALSE;
+    RingPushTx((struct RemoteEvent *)event);
+    return TRUE;
+}
+
+u8 RemotePlayer_NextTxSeq(void)
+{
+    return sTxSeq++;
+}
+
+bool8 RemotePlayer_InLoopback(void)
+{
+#if REMOTE_PLAYER_LOOPBACK
+    return !sRealPeerSeen;
+#else
+    return FALSE;
+#endif
+}
+
 void RemotePlayer_Init(void)
 {
     u8 i;
@@ -211,6 +237,7 @@ void RemotePlayer_Init(void)
         sSlots[i].qHead = 0;
         sSlots[i].qTail = 0;
     }
+    RemoteBattle_Init();
     sRxHead = sRxTail = 0;
     sTxHead = sTxTail = 0;
     sHavePlayerPos = FALSE;
@@ -387,6 +414,8 @@ static void CreateBlob(u8 slotId)
     SetSurfBlob_BobState(spriteId, BOB_PLAYER_AND_MON);
 }
 
+static s16 Abs16(s16 v);
+
 static bool8 SlotIsAlive(u8 slotId)
 {
     struct RemoteSlot *slot = &sSlots[slotId];
@@ -421,6 +450,38 @@ static void DespawnSlot(u8 slotId)
     }
     slot->spawned = FALSE;
     slot->objectId = OBJECT_EVENTS_COUNT;
+}
+
+bool8 RemotePlayer_SlotIsNear(u8 slot, u8 maxDistance, u8 *gender)
+{
+    struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *object;
+    s16 dist;
+
+    if (slot >= REMOTE_MAX_PLAYERS || !SlotIsAlive(slot))
+        return FALSE;
+    object = &gObjectEvents[sSlots[slot].objectId];
+    dist = Abs16(object->currentCoords.x - player->currentCoords.x)
+         + Abs16(object->currentCoords.y - player->currentCoords.y);
+    if (dist > maxDistance)
+        return FALSE;
+    *gender = sSlots[slot].gender;
+    return TRUE;
+}
+
+bool8 RemotePlayer_FindNearby(u8 maxDistance, u8 *slot, u8 *gender)
+{
+    u8 i;
+
+    for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
+    {
+        if (RemotePlayer_SlotIsNear(i, maxDistance, gender))
+        {
+            *slot = i;
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 static bool8 OnMyMap(const struct RemoteEvent *event)
@@ -758,7 +819,12 @@ static void DrainRx(void)
 {
     while (sRxTail != sRxHead)
     {
-        QueueEvent(&sRxRing[sRxTail]);
+        u8 kind = REMOTE_EVENT_KIND(sRxRing[sRxTail].type);
+
+        if (kind == REMOTE_EVENT_BPARTY || kind == REMOTE_EVENT_BEXP)
+            RemoteBattle_HandleRx(&sRxRing[sRxTail]);
+        else
+            QueueEvent(&sRxRing[sRxTail]);
         sRxTail = (sRxTail + 1) % RING_LEN;
     }
 }
@@ -800,6 +866,7 @@ void RemotePlayer_Tick(void)
         return;
 
     RemoteSio_Tick();
+    RemoteBattle_Tick();
 
 #if REMOTE_PLAYER_LOOPBACK
     sFrameCounter++;

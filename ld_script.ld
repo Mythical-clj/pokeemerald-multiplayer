@@ -113,6 +113,7 @@ SECTIONS {
         src/overworld.o(.text);
         src/remote_player.o(.text);
         src/remote_sio.o(.text);
+        src/remote_battle.o(.text);
         src/fieldmap.o(.text);
         src/metatile_behavior.o(.text);
         src/field_camera.o(.text);
@@ -501,6 +502,7 @@ SECTIONS {
         src/overworld.o(.rodata);
         src/remote_player.o(.rodata);
         src/remote_sio.o(.rodata);
+        src/remote_battle.o(.rodata);
         src/tilesets.o(.rodata);
         data/maps.o(.rodata);
         src/fieldmap.o(.rodata);

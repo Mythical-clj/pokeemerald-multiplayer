@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_anim.h"
 #include "battle_ai_script_commands.h"
@@ -72,6 +73,7 @@ static void CB2_HandleStartMultiBattle(void);
 static void CB2_HandleStartBattle(void);
 static void TryCorrectShedinjaLanguage(struct Pokemon *mon);
 static u8 CreateNPCTrainerParty(struct Pokemon *party, u16 trainerNum, bool8 firstTrainer);
+static void SplitTrainerPartyOverOpponents(void);
 static void BattleMainCB1(void);
 static void CB2_EndLinkBattle(void);
 static void EndLinkBattleInSteps(void);
@@ -694,9 +696,16 @@ static void CB2_InitBattleInternal(void)
 
     if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_RECORDED)))
     {
-        CreateNPCTrainerParty(&gEnemyParty[0], gTrainerBattleOpponent_A, TRUE);
-        if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
-            CreateNPCTrainerParty(&gEnemyParty[PARTY_SIZE / 2], gTrainerBattleOpponent_B, FALSE);
+        if (gRemoteSplitTrainer)
+        {
+            SplitTrainerPartyOverOpponents();
+        }
+        else
+        {
+            CreateNPCTrainerParty(&gEnemyParty[0], gTrainerBattleOpponent_A, TRUE);
+            if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
+                CreateNPCTrainerParty(&gEnemyParty[PARTY_SIZE / 2], gTrainerBattleOpponent_B, FALSE);
+        }
         SetWildMonHeldItem();
     }
 
@@ -2073,6 +2082,25 @@ static u8 CreateNPCTrainerParty(struct Pokemon *party, u16 trainerNum, bool8 fir
     }
 
     return gTrainers[trainerNum].partySize;
+}
+
+// A single trainer fights alongside themselves in a battle with a remote
+// partner: their team is dealt out, one Pokémon to each opponent in turn.
+static void SplitTrainerPartyOverOpponents(void)
+{
+    struct Pokemon whole[PARTY_SIZE];
+    u32 savedFlags = gBattleTypeFlags;
+    s32 i;
+
+    gBattleTypeFlags &= ~BATTLE_TYPE_TWO_OPPONENTS;
+    CreateNPCTrainerParty(&gEnemyParty[0], gTrainerBattleOpponent_A, TRUE);
+    gBattleTypeFlags = savedFlags;
+
+    for (i = 0; i < PARTY_SIZE; i++)
+        whole[i] = gEnemyParty[i];
+    ZeroEnemyPartyMons();
+    for (i = 0; i < PARTY_SIZE; i++)
+        gEnemyParty[(i & 1) ? PARTY_SIZE / 2 + i / 2 : i / 2] = whole[i];
 }
 
 static void UNUSED HBlankCB_Battle(void)

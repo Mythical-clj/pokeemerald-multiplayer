@@ -1,4 +1,5 @@
 #include "global.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_message.h"
 #include "battle_anim.h"
@@ -5635,7 +5636,7 @@ static u32 GetTrainerMoneyToGive(u16 trainerId)
 static void Cmd_getmoneyreward(void)
 {
     u32 moneyReward = GetTrainerMoneyToGive(gTrainerBattleOpponent_A);
-    if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
+    if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS && !gRemoteSplitTrainer)
         moneyReward += GetTrainerMoneyToGive(gTrainerBattleOpponent_B);
 
     AddMoney(&gSaveBlock1Ptr->money, moneyReward);
