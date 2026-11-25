@@ -283,8 +283,6 @@ const u8 *GetInteractedLinkPlayerScript(struct MapPosition *position, u8 metatil
     gSpecialVar_LastTalked = gObjectEvents[objectEventId].localId;
     gSpecialVar_Facing = direction;
 
-    if (IS_REMOTE_LOCAL_ID(gSpecialVar_LastTalked))
-        return RemoteSocial_EventScript_Interact;
     return GetObjectEventScriptPointerByObjectEventId(objectEventId);
 }
 
@@ -294,6 +292,8 @@ static const u8 *GetInteractedObjectEventScript(struct MapPosition *position, u8
     const u8 *script;
 
     objectEventId = GetObjectEventIdByPosition(position->x, position->y, position->elevation);
+    if (objectEventId == OBJECT_EVENTS_COUNT)
+        objectEventId = RemotePlayer_FindObjectNear(position->x, position->y, direction);
     if (objectEventId == OBJECT_EVENTS_COUNT || gObjectEvents[objectEventId].localId == LOCALID_PLAYER)
     {
         if (MetatileBehavior_IsCounter(metatileBehavior) != TRUE)
@@ -308,6 +308,9 @@ static const u8 *GetInteractedObjectEventScript(struct MapPosition *position, u8
     gSelectedObjectEvent = objectEventId;
     gSpecialVar_LastTalked = gObjectEvents[objectEventId].localId;
     gSpecialVar_Facing = direction;
+
+    if (IS_REMOTE_LOCAL_ID(gSpecialVar_LastTalked))
+        return RemoteSocial_EventScript_Interact;
 
     if (InTrainerHill() == TRUE)
         script = GetTrainerHillTrainerScript();

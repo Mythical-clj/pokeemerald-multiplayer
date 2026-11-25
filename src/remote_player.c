@@ -505,6 +505,29 @@ bool8 RemotePlayer_FindNearby(u8 maxDistance, u8 *slot, u8 *gender)
     return FALSE;
 }
 
+// The remote player the avatar means when pressing A towards (x, y): on the
+// tile itself or one tile further on the same line, so being a tile out of
+// step with the other game does not make them unreachable.
+u8 RemotePlayer_FindObjectNear(s16 x, s16 y, u8 direction)
+{
+    u8 i;
+    s16 farX = x + gDirectionToVectors[direction].x;
+    s16 farY = y + gDirectionToVectors[direction].y;
+
+    for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
+    {
+        struct ObjectEvent *object;
+
+        if (!SlotIsAlive(i))
+            continue;
+        object = &gObjectEvents[sSlots[i].objectId];
+        if ((object->currentCoords.x == x && object->currentCoords.y == y)
+         || (object->currentCoords.x == farX && object->currentCoords.y == farY))
+            return sSlots[i].objectId;
+    }
+    return OBJECT_EVENTS_COUNT;
+}
+
 static bool8 OnMyMap(const struct RemoteEvent *event)
 {
     return event->mapGroup == gSaveBlock1Ptr->location.mapGroup
@@ -782,7 +805,9 @@ static void ConsumeSlotEvents(u8 slotId)
                 s16 curY = object->currentCoords.y;
                 s16 drift = Abs16(x - curX) + Abs16(y - curY);
 
-                if (slot->forceResync || drift > DRIFT_TOLERANCE)
+                // Standing still there is nothing to forgive: a remote that is
+                // off its tile cannot be talked to.
+                if (slot->forceResync || drift > (ObjectEventIsHeldMovementActive(object) ? DRIFT_TOLERANCE : 0))
                 {
                     Reposition(slotId, x, y, event->dir);
                     slot->forceResync = FALSE;
