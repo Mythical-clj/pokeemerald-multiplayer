@@ -25,8 +25,8 @@ static const u16 sSkinTones[PLAYER_LOOK_SKINS][3] =
     {C8(170, 115, 80), C8(140, 88, 58), C8(105, 62, 42)},
 };
 
-// Light to dark. The boy's clothes use all four (entries 5-8), the girl's
-// only the first two (entries 12-13).
+// Light to dark. Only the first two shades are used (palette entries 12-13,
+// the red parts of both costumes).
 static const u16 sOutfitRamps[PLAYER_LOOK_OUTFITS][4] =
 {
     {0, 0, 0, 0},   // default: left as it is
@@ -91,16 +91,10 @@ void PlayerLook_ApplyBuffer(u16 *pal, u8 female, u8 packed)
     }
     if (outfit > 0 && outfit < PLAYER_LOOK_OUTFITS)
     {
-        if (female)
-        {
-            pal[12] = sOutfitRamps[outfit][0];
-            pal[13] = sOutfitRamps[outfit][1];
-        }
-        else
-        {
-            for (i = 0; i < 4; i++)
-                pal[5 + i] = sOutfitRamps[outfit][i];
-        }
+        // The red parts of the costume (entries 12-13) take the colour; the
+        // black parts and the green headband stay as they are.
+        pal[12] = sOutfitRamps[outfit][0];
+        pal[13] = sOutfitRamps[outfit][1];
     }
 }
 
@@ -255,16 +249,8 @@ void PlayerLook_ApplyToReflection(struct ObjectEvent *object, struct Sprite *ref
         }
         if (((packed >> 2) & 7) != 0)
         {
-            if (kind == 1)
-            {
-                buf[12] = Reflect(look[12], C8(170, 175, 205), 2);
-                buf[13] = Reflect(look[13], C8(170, 175, 205), 2);
-            }
-            else
-            {
-                for (i = 5; i < 9; i++)
-                    buf[i] = Reflect(look[i], C8(170, 175, 205), 2);
-            }
+            buf[12] = Reflect(look[12], C8(170, 175, 205), 2);
+            buf[13] = Reflect(look[13], C8(170, 175, 205), 2);
         }
         sp.data = buf;
         sp.tag = tag;
