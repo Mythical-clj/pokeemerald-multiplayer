@@ -1,5 +1,6 @@
 #include "global.h"
 #include "overworld.h"
+#include "player_look.h"
 #include "event_object_movement.h"
 #include "field_effect.h"
 #include "field_effect_helpers.h"
@@ -44,6 +45,7 @@ struct RemoteSlot
     u8 known;           // we have heard from this player since they (re)joined
     u8 gender;
     u8 avatarState;     // PLAYER_AVATAR_STATE_*, decides the sprite
+    u8 look;            // skin | outfit << 2 (see player_look.h)
     u8 blobSpriteId;    // surf blob under a surfing player, MAX_SPRITES = none
     u8 mapGroup;        // map the player says they are on
     u8 mapNum;
@@ -228,6 +230,11 @@ u8 RemotePlayer_NextTxSeq(void)
     return sTxSeq++;
 }
 
+u8 RemotePlayer_GetLook(u8 slot)
+{
+    return slot < REMOTE_MAX_PLAYERS ? sSlots[slot].look : 0;
+}
+
 u8 RemotePlayer_GetGender(u8 slot)
 {
     return slot < REMOTE_MAX_PLAYERS ? sSlots[slot].gender : MALE;
@@ -323,7 +330,8 @@ static void EmitEvent(u8 kind, struct ObjectEvent *player, u8 dir, u8 action)
     event.x = player->currentCoords.x;
     event.y = player->currentCoords.y;
     event.gender = gSaveBlock2Ptr->playerGender;
-    event.avatarState = LocalAvatarState();
+    // Low 3 bits: avatar state. High 5 bits: the chosen look.
+    event.avatarState = LocalAvatarState() | (PlayerLook_Pack() << 3);
     RingPushTx(&event);
 
 #if REMOTE_PLAYER_LOOPBACK
@@ -711,7 +719,8 @@ static void ConsumeSlotEvents(u8 slotId)
 
         slot->known = TRUE;
         slot->gender = event->gender;
-        slot->avatarState = event->avatarState < ARRAY_COUNT(sAnimCount) ? event->avatarState : PLAYER_AVATAR_STATE_NORMAL;
+        slot->avatarState = (event->avatarState & 7) < ARRAY_COUNT(sAnimCount) ? (event->avatarState & 7) : PLAYER_AVATAR_STATE_NORMAL;
+        slot->look = event->avatarState >> 3;
 
         if (!sameMap)
         {
@@ -929,6 +938,14 @@ void RemotePlayer_StartDrop(u8 slot)
         sSlots[slot].dropY = 96;
 }
 
+static void TickLook(u8 i)
+{
+    struct RemoteSlot *slot = &sSlots[i];
+
+    if (slot->objectId < OBJECT_EVENTS_COUNT)
+        PlayerLook_ApplyToObject(&gObjectEvents[slot->objectId], slot->look);
+}
+
 static void TickDrop(u8 i)
 {
     struct RemoteSlot *slot = &sSlots[i];
@@ -966,11 +983,13 @@ void RemotePlayer_Tick(void)
         DrainLoopback();
 #endif
 
+    PlayerLook_UpdateLocal();
     TrackPlayer();
     DrainRx();
     for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
     {
         TickDrop(i);
+        TickLook(i);
         if (sSlots[i].spawnCooldown != 0)
             sSlots[i].spawnCooldown--;
         ConsumeSlotEvents(i);

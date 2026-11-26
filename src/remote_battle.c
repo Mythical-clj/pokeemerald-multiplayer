@@ -202,6 +202,7 @@ static EWRAM_DATA u8 sPick[SEND_SIZE] = {0};
 static EWRAM_DATA u8 sPickCount = 0;
 static EWRAM_DATA u32 sExpBefore[TEAM_SIZE] = {0};
 static EWRAM_DATA u8 sPartnerGender = MALE;
+static EWRAM_DATA u8 sPartnerLook = 0;
 static EWRAM_DATA struct Pokemon sVersusEnemy[SEND_SIZE] = {{0}};
 static EWRAM_DATA u8 sPartnerName[NAME_BYTES + 1] = {0};
 static EWRAM_DATA struct Pokemon sBattleParty[PARTY_SIZE] = {0};
@@ -1161,6 +1162,7 @@ static void StartGuestBattle(void)
         sPartnerName[i] = peer->name[i];
     sPartnerName[NAME_BYTES] = EOS;
     sPartnerGender = RemotePlayer_GetGender(sStartSlot);
+    sPartnerLook = RemotePlayer_GetLook(sStartSlot);
     gPartnerTrainerId = TRAINER_STEVEN_PARTNER;
 
     gRemoteBattleActive = TRUE;
@@ -1275,6 +1277,7 @@ static bool8 FindPartner(u8 *slot)
     {
         *slot = sLockedSlot;
         sPartnerGender = gender;
+        sPartnerLook = RemotePlayer_GetLook(*slot);
         return TRUE;
     }
     if (!RemotePlayer_FindNearby(PARTNER_MAX_DISTANCE, slot, &gender))
@@ -1282,6 +1285,7 @@ static bool8 FindPartner(u8 *slot)
     if (!sPeers[*slot].ready)
         return FALSE;
     sPartnerGender = gender;
+    sPartnerLook = RemotePlayer_GetLook(*slot);
     return TRUE;
 }
 
@@ -1542,6 +1546,7 @@ bool8 RemoteBattle_BeginVersus(const struct VersusRequest *request)
         sPartnerName[i] = peer->name[i];
     sPartnerName[NAME_BYTES] = EOS;
     sPartnerGender = RemotePlayer_GetGender(request->slot);
+    sPartnerLook = RemotePlayer_GetLook(request->slot);
     sMoneyBefore = gSaveBlock1Ptr->money;
 
     SavePlayerParty();
@@ -1583,6 +1588,11 @@ const u8 *RemoteBattle_GetNameOfSlot(u8 slot)
 const u8 *RemoteBattle_GetPartnerName(void)
 {
     return sPartnerName;
+}
+
+u8 RemoteBattle_GetPartnerLook(void)
+{
+    return gRemoteBattleActive ? sPartnerLook : 0;
 }
 
 u8 RemoteBattle_GetPartnerBackPic(void)

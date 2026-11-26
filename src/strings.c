@@ -573,6 +573,7 @@ const u8 gText_Dennis[] = _("DENNIS");
 const u8 gText_Roberto[] = _("ROBERTO");
 const u8 gText_TurnOff[] = _("TURN OFF");
 const u8 gText_Decoration[] = _("DECORATION");
+const u8 gText_Appearance[] = _("APPEARANCE");
 const u8 gText_ItemStorage[] = _("ITEM STORAGE");
 const u8 gText_Mailbox[] = _("MAILBOX");
 const u8 gText_DepositItem[] = _("DEPOSIT ITEM");

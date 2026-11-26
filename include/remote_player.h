@@ -66,6 +66,7 @@ bool8 RemotePlayer_TryPushTx(const struct RemoteEvent *event);
 u8 RemotePlayer_NextTxSeq(void);
 bool8 RemotePlayer_InLoopback(void);
 u8 RemotePlayer_GetGender(u8 slot);
+u8 RemotePlayer_GetLook(u8 slot);
 void RemotePlayer_DrainBattleRx(void);
 void RemotePlayer_StartDrop(u8 slot);
 bool8 RemotePlayer_SlotIsNear(u8 slot, u8 maxDistance, u8 *gender);

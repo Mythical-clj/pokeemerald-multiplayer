@@ -123,6 +123,9 @@
 #define MULTI_FALLARBOR_TENT_RULES         112
 #define MULTI_TAG_MATCH_TYPE               113
 #define MULTI_REMOTE_SOCIAL                114
+#define MULTI_PLAYER_LOOK_TOP              115
+#define MULTI_PLAYER_LOOK_SKIN             116
+#define MULTI_PLAYER_LOOK_OUTFIT           117
 
 // Lilycove SS Tidal Multichoice Selections
 #define SSTIDAL_SELECTION_SLATEPORT        0

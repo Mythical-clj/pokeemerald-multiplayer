@@ -1,4 +1,5 @@
 #include "global.h"
+#include "player_look.h"
 #include "scanline_effect.h"
 #include "palette.h"
 #include "task.h"
@@ -1898,5 +1899,7 @@ static void CreateTrainerCardTrainerPic(void)
                     sTrainerPicOffset[sData->isHoenn][sData->trainerCard.gender][1],
                     8,
                     WIN_TRAINER_PIC);
+        if (!sData->isLink)
+            PlayerLook_ApplyToLoaded(PLTT_ID(8), sData->trainerCard.gender == FEMALE, PlayerLook_Pack());
     }
 }

@@ -1,4 +1,6 @@
 #include "global.h"
+#include "player_look.h"
+#include "remote_battle.h"
 #include "battle.h"
 #include "battle_controllers.h"
 #include "battle_ai_script_commands.h"
@@ -723,6 +725,13 @@ void DecompressTrainerBackPic(u16 backPicId, u8 battler)
 #endif
     LoadCompressedPalette(gTrainerBackPicPaletteTable[backPicId].data,
                           OBJ_PLTT_ID(battler), PLTT_SIZE_4BPP);
+    if (backPicId == TRAINER_BACK_PIC_BRENDAN || backPicId == TRAINER_BACK_PIC_MAY)
+    {
+        // Mine for the first slot, the other player's for their partner slot.
+        u8 look = (battler == 0 || !gRemoteBattleActive) ? PlayerLook_Pack() : RemoteBattle_GetPartnerLook();
+
+        PlayerLook_ApplyToLoaded(OBJ_PLTT_ID(battler), backPicId == TRAINER_BACK_PIC_MAY, look);
+    }
 }
 
 void BattleGfxSfxDummy3(u8 gender)

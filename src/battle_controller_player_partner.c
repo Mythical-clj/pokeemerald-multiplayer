@@ -1,4 +1,5 @@
 #include "global.h"
+#include "player_look.h"
 #include "remote_battle.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"
@@ -1855,6 +1856,8 @@ static void PlayerPartnerHandleIntroTrainerBallThrow(void)
     {
         u8 spriteId = RemoteBattle_GetPartnerBackPic();
         LoadCompressedPalette(gTrainerBackPicPaletteTable[spriteId].data, OBJ_PLTT_ID(paletteNum), PLTT_SIZE_4BPP);
+        if (spriteId == TRAINER_BACK_PIC_BRENDAN || spriteId == TRAINER_BACK_PIC_MAY)
+            PlayerLook_ApplyToLoaded(OBJ_PLTT_ID(paletteNum), spriteId == TRAINER_BACK_PIC_MAY, RemoteBattle_GetPartnerLook());
     }
     else
     {

@@ -797,6 +797,40 @@ static const struct MenuAction MultichoiceList_RemoteSocial[] =
     {sText_RemoteCancel},
 };
 
+static const u8 sText_LookSkin[] = _("Skin tone");
+static const u8 sText_LookOutfit[] = _("Outfit color");
+static const u8 sText_LookDone[] = _("Done");
+static const u8 sText_LookDefault[] = _("Default");
+static const u8 sText_LookLightBrown[] = _("Light brown");
+static const u8 sText_LookDarkBrown[] = _("Dark brown");
+static const u8 sText_LookRed[] = _("Red");
+static const u8 sText_LookBlue[] = _("Blue");
+static const u8 sText_LookGreen[] = _("Green");
+static const u8 sText_LookPurple[] = _("Purple");
+
+static const struct MenuAction MultichoiceList_PlayerLookTop[] =
+{
+    {sText_LookSkin},
+    {sText_LookOutfit},
+    {sText_LookDone},
+};
+
+static const struct MenuAction MultichoiceList_PlayerLookSkin[] =
+{
+    {sText_LookDefault},
+    {sText_LookLightBrown},
+    {sText_LookDarkBrown},
+};
+
+static const struct MenuAction MultichoiceList_PlayerLookOutfit[] =
+{
+    {sText_LookDefault},
+    {sText_LookRed},
+    {sText_LookBlue},
+    {sText_LookGreen},
+    {sText_LookPurple},
+};
+
 static const struct MultichoiceListStruct sMultichoiceLists[] =
 {
     [MULTI_BRINEY_ON_DEWFORD]          = MULTICHOICE(MultichoiceList_BrineyOnDewford),
@@ -914,6 +948,9 @@ static const struct MultichoiceListStruct sMultichoiceLists[] =
     [MULTI_FALLARBOR_TENT_RULES]       = MULTICHOICE(MultichoiceList_FallarborTentRules),
     [MULTI_TAG_MATCH_TYPE]             = MULTICHOICE(MultichoiceList_TagMatchType),
     [MULTI_REMOTE_SOCIAL]              = MULTICHOICE(MultichoiceList_RemoteSocial),
+    [MULTI_PLAYER_LOOK_TOP]            = MULTICHOICE(MultichoiceList_PlayerLookTop),
+    [MULTI_PLAYER_LOOK_SKIN]           = MULTICHOICE(MultichoiceList_PlayerLookSkin),
+    [MULTI_PLAYER_LOOK_OUTFIT]         = MULTICHOICE(MultichoiceList_PlayerLookOutfit),
 };
 
 const u8 *const gStdStrings[] =

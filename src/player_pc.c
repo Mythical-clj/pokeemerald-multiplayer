@@ -29,13 +29,18 @@
 #include "task.h"
 #include "window.h"
 #include "menu_specialized.h"
+#include "player_look.h"
+
+extern const u8 PlayerLook_EventScript_Appearance[];
+extern const u8 gText_Appearance[];
 
 // Top level PC menu options
 enum {
     MENU_ITEMSTORAGE,
     MENU_MAILBOX,
     MENU_DECORATION,
-    MENU_TURNOFF
+    MENU_TURNOFF,
+    MENU_APPEARANCE
 };
 
 // Item storage menu options
@@ -114,6 +119,7 @@ static void PlayerPC_ItemStorage(u8);
 static void PlayerPC_Mailbox(u8);
 static void PlayerPC_Decoration(u8);
 static void PlayerPC_TurnOff(u8);
+static void PlayerPC_Appearance(u8);
 
 static void Mailbox_DoMailMoveToBag(u8);
 static void Mailbox_DoMailRead(u8);
@@ -194,7 +200,8 @@ static const struct MenuAction sPlayerPCMenuActions[] =
     [MENU_ITEMSTORAGE] = { gText_ItemStorage, {PlayerPC_ItemStorage} },
     [MENU_MAILBOX]     = { gText_Mailbox,     {PlayerPC_Mailbox} },
     [MENU_DECORATION]  = { gText_Decoration,  {PlayerPC_Decoration} },
-    [MENU_TURNOFF]     = { gText_TurnOff,     {PlayerPC_TurnOff} }
+    [MENU_TURNOFF]     = { gText_TurnOff,     {PlayerPC_TurnOff} },
+    [MENU_APPEARANCE]  = { gText_Appearance,  {PlayerPC_Appearance} }
 };
 
 static const u8 sBedroomPC_OptionOrder[] =
@@ -202,6 +209,7 @@ static const u8 sBedroomPC_OptionOrder[] =
     MENU_ITEMSTORAGE,
     MENU_MAILBOX,
     MENU_DECORATION,
+    MENU_APPEARANCE,
     MENU_TURNOFF
 };
 #define NUM_BEDROOM_PC_OPTIONS ARRAY_COUNT(sBedroomPC_OptionOrder)
@@ -252,7 +260,7 @@ static const struct WindowTemplate sWindowTemplates_MainMenus[] =
         .tilemapLeft = 1,
         .tilemapTop = 1,
         .width = 9,
-        .height = 8,
+        .height = 10,
         .paletteNum = 15,
         .baseBlock = 1
     },
@@ -487,6 +495,12 @@ static void PlayerPC_Mailbox(u8 taskId)
 static void PlayerPC_Decoration(u8 taskId)
 {
     DoPlayerRoomDecorationMenu(taskId);
+}
+
+static void PlayerPC_Appearance(u8 taskId)
+{
+    ScriptContext_SetupScript(PlayerLook_EventScript_Appearance);
+    DestroyTask(taskId);
 }
 
 static void PlayerPC_TurnOff(u8 taskId)

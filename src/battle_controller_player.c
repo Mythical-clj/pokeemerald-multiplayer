@@ -1,4 +1,5 @@
 #include "global.h"
+#include "player_look.h"
 #include "remote_battle.h"
 #include "battle.h"
 #include "battle_anim.h"
@@ -2953,6 +2954,7 @@ static void PlayerHandleIntroTrainerBallThrow(void)
 
     paletteNum = AllocSpritePalette(0xD6F8);
     LoadCompressedPalette(gTrainerBackPicPaletteTable[gSaveBlock2Ptr->playerGender].data, OBJ_PLTT_ID(paletteNum), PLTT_SIZE_4BPP);
+    PlayerLook_ApplyToLoaded(OBJ_PLTT_ID(paletteNum), gSaveBlock2Ptr->playerGender == FEMALE, PlayerLook_Pack());
     gSprites[gBattlerSpriteIds[gActiveBattler]].oam.paletteNum = paletteNum;
 
     taskId = CreateTask(Task_StartSendOutAnim, 5);
