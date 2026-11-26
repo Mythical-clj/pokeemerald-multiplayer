@@ -3036,6 +3036,7 @@ extern const u32 gTrainerPalette_MagmaAdmin[];
 extern const u32 gTrainerPalette_Wally[];
 extern const u32 gTrainerPalette_Brendan[];
 extern const u32 gTrainerPalette_May[];
+extern const u32 gTrainerPalette_MayFront[];
 extern const u32 gTrainerPalette_BugCatcher[];
 extern const u32 gTrainerPalette_PokemonRangerM[];
 extern const u32 gTrainerPalette_PokemonRangerF[];

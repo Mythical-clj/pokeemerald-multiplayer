@@ -216,6 +216,7 @@ const u32 gTrainerPalette_Brendan[] = INCGFX_U32("graphics/trainers/palettes/bre
 
 const u32 gTrainerFrontPic_May[] = INCGFX_U32("graphics/trainers/front_pics/may.png", ".4bpp.lz");
 const u32 gTrainerPalette_May[] = INCGFX_U32("graphics/trainers/palettes/may.pal", ".gbapal.lz");
+const u32 gTrainerPalette_MayFront[] = INCGFX_U32("graphics/trainers/palettes/may_front.pal", ".gbapal.lz");
 
 const u32 gTrainerFrontPic_BugCatcher[] = INCGFX_U32("graphics/trainers/front_pics/bug_catcher.png", ".4bpp.lz");
 const u32 gTrainerPalette_BugCatcher[] = INCGFX_U32("graphics/trainers/front_pics/bug_catcher.png", ".gbapal.lz");
