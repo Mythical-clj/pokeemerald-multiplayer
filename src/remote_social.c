@@ -47,7 +47,7 @@
 #define OFFER_CHUNKS    ((sizeof(struct Pokemon) + 5) / 6)
 #define OFFER_MESSAGES  (OFFER_CHUNKS + 1)
 #define OFFER_PERIOD    4
-#define MIX_PERIOD      2
+#define MIX_PERIOD      1
 #define MIX_TIMEOUT_FRAMES      7200
 #define REQUEST_RESEND_FRAMES   20
 #define REQUEST_TIMEOUT_FRAMES  900     // the other player gets 15 s to answer
