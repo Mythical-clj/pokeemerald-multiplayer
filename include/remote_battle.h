@@ -61,6 +61,7 @@ bool8 RemoteBattle_AwaitingNear(void);
 void RemoteBattle_HideWaiting(void);
 u8 RemoteBattle_GetPartnerLook(void);
 u8 RemoteBattle_GetVersusLook(void);
+void RemoteBattle_VersusPhraseToString(u8 which);
 
 // Battle side. Tick runs every frame of the battle.
 void RemoteBattle_BattleTick(void);

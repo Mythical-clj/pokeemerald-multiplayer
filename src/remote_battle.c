@@ -2,6 +2,8 @@
 #include "battle.h"
 #include "battle_setup.h"
 #include "battle_message.h"
+#include "battle_tower.h"
+#include "easy_chat.h"
 #include "data.h"
 #include "load_save.h"
 #include "main.h"
@@ -40,7 +42,10 @@ static void CB2_RemoteBattleDone(void);
 #define SEND_SIZE           4       // what is sent: versus doubles uses four
 #define TEAM_BYTES          (SEND_SIZE * sizeof(struct Pokemon))   // 400
 #define NAME_BYTES          8
-#define PAYLOAD_BYTES       (TEAM_BYTES + NAME_BYTES)
+#define PHRASE_WORDS        EASY_CHAT_BATTLE_WORDS_COUNT   // 6 words per phrase
+#define PHRASE_COUNT        3                              // start, won, lost
+#define PHRASE_BYTES        (PHRASE_COUNT * PHRASE_WORDS * 2)
+#define PAYLOAD_BYTES       (TEAM_BYTES + NAME_BYTES + PHRASE_BYTES)
 #define CHUNK_BYTES         6
 #define CHUNK_COUNT         ((PAYLOAD_BYTES + CHUNK_BYTES - 1) / CHUNK_BYTES)
 
@@ -61,7 +66,10 @@ static void CB2_RemoteBattleDone(void);
 #define NEAR_TIMEOUT_FRAMES     1500    // 25 s for the other player to come within range
 #define GUEST_ACCEPT_FRAMES     24      // acks sent before the guest's battle starts
 #define GUEST_PENDING_FRAMES    1200     // how long the guest waits for a moment to join
-#define REMOTE_WAIT_FRAMES      5400    // contact lost: the remote battler plays itself
+#define REMOTE_WAIT_FRAMES      5400    // (kept for reference) old fixed wait
+#define LINK_DEAD_FRAMES        5400    // nothing heard from the other game for 90 s: contact lost
+#define DEADLOCK_FRAMES         1200    // both games wait for each other, all acked, for 20 s
+#define LINK_QUIET_FRAMES       600     // 10 s without news: say so on screen
 
 #define ROLE_NONE   0
 #define ROLE_HOST   1
@@ -150,6 +158,7 @@ struct PeerTeam
     u8 readyTag;
     u8 gender;
     u8 name[NAME_BYTES];
+    u16 phrases[PHRASE_COUNT][PHRASE_WORDS];
     struct Pokemon mons[SEND_SIZE];
 };
 
@@ -180,6 +189,7 @@ static EWRAM_DATA struct PeerTeam sPeers[REMOTE_MAX_PLAYERS] = {0};
 // What the local player sends.
 static EWRAM_DATA struct Pokemon sSendMons[SEND_SIZE] = {0};
 static EWRAM_DATA u8 sSendName[NAME_BYTES] = {0};
+static EWRAM_DATA u16 sSendPhrases[PHRASE_COUNT][PHRASE_WORDS] = {{0}};
 static EWRAM_DATA u8 sSendTag = 0;
 static EWRAM_DATA u32 sSendHash = 0;
 static EWRAM_DATA u8 sSendPick[SEND_SIZE] = {0};
@@ -231,6 +241,12 @@ static EWRAM_DATA bool8 sGuestAccepting = FALSE;
 static EWRAM_DATA bool8 sRemoteAI = FALSE;
 static EWRAM_DATA u16 sWaitFrames = 0;
 static EWRAM_DATA u16 sBattleFrame = 0;
+static EWRAM_DATA u16 sLastHeardFrame = 0;      // last sync/choice from the other game
+static EWRAM_DATA u16 sLastWaitFrame = 0;       // last frame this game waited for a choice
+static EWRAM_DATA u16 sPeerWaitFrame = 0;       // last sync that said the other game waits
+static EWRAM_DATA bool8 sPeerWaiting = FALSE;
+static EWRAM_DATA u16 sDeadlockFrames = 0;
+static EWRAM_DATA u8 sWaitMsgState = 0;         // 0 none, 1 waiting, 2 waiting + no signal
 // A fingerprint of the battle at the start of each turn, kept for a few turns
 // so it can be compared with the other game's.
 #define HASH_TURNS 4
@@ -282,8 +298,15 @@ static u8 SendByte(u16 offset)
 {
     if (offset < TEAM_BYTES)
         return ((u8 *)sSendMons)[offset];
-    if (offset < PAYLOAD_BYTES)
+    if (offset < TEAM_BYTES + NAME_BYTES)
         return sSendName[offset - TEAM_BYTES];
+    if (offset < PAYLOAD_BYTES)
+    {
+        u16 o = offset - TEAM_BYTES - NAME_BYTES;
+        u16 word = sSendPhrases[o / (PHRASE_WORDS * 2)][(o / 2) % PHRASE_WORDS];
+
+        return (o & 1) ? (word >> 8) : (word & 0xFF);
+    }
     return 0;
 }
 
@@ -305,6 +328,12 @@ static void RefreshSendBuffer(void)
     for (i = 0; i < NAME_BYTES; i++)
         sSendName[i] = EOS;
     StringCopyN(sSendName, gSaveBlock2Ptr->playerName, PLAYER_NAME_LENGTH);
+    for (i = 0; i < PHRASE_WORDS; i++)
+    {
+        sSendPhrases[0][i] = gSaveBlock1Ptr->easyChatBattleStart[i];
+        sSendPhrases[1][i] = gSaveBlock1Ptr->easyChatBattleWon[i];
+        sSendPhrases[2][i] = gSaveBlock1Ptr->easyChatBattleLost[i];
+    }
 
     // The tag says "this is the same team as before". It has to change
     // whenever the team does, order included: a weak checksum let some
@@ -440,6 +469,15 @@ static void CompleteTeam(struct PeerTeam *peer)
     for (i = 0; i < NAME_BYTES; i++)
         peer->name[i] = peer->assembly[TEAM_BYTES + i];
     peer->name[NAME_BYTES - 1] = EOS;
+    for (i = 0; i < PHRASE_COUNT; i++)
+    {
+        for (j = 0; j < PHRASE_WORDS; j++)
+        {
+            u16 o = TEAM_BYTES + NAME_BYTES + (i * PHRASE_WORDS + j) * 2;
+
+            peer->phrases[i][j] = peer->assembly[o] | (peer->assembly[o + 1] << 8);
+        }
+    }
 
     // Anything that does not look like a Pokémon is dropped.
     for (i = 0; i < SEND_SIZE; i++)
@@ -708,6 +746,10 @@ static void HandleSyncMessage(const struct SyncMessage *msg)
 {
     if (sRole == ROLE_NONE || msg->session != sSession)
         return;
+    sLastHeardFrame = sBattleFrame;
+    sPeerWaiting = msg->data[4] != 0;
+    if (sPeerWaiting)
+        sPeerWaitFrame = sBattleFrame;
     if (sRole == ROLE_HOST && msg->startAck)
         sStartAcked = TRUE;
     // Only an acknowledgement for choices that were really sent counts.
@@ -736,6 +778,7 @@ static void HandleChoiceMessage(const struct ChoiceMessage *msg)
 
     if (sRole == ROLE_NONE || msg->session != sSession)
         return;
+    sLastHeardFrame = sBattleFrame;
     // Choices arrive in order; anything else is a repeat or has to wait.
     if (msg->n != sInNext || (u8)(sInNext - sInRead) >= CHOICE_RING)
         return;
@@ -784,6 +827,12 @@ static void ResetChoiceRings(void)
     sInRead = 0;
     sWaitFrames = 0;
     sRemoteAI = FALSE;
+    sLastHeardFrame = sBattleFrame;
+    sLastWaitFrame = sBattleFrame - 100;
+    sPeerWaitFrame = sBattleFrame - 100;
+    sPeerWaiting = FALSE;
+    sDeadlockFrames = 0;
+    sWaitMsgState = 0;
     sLastTurnSeen = 0xFF;
     sHaveHash = FALSE;
     for (i = 0; i < HASH_TURNS; i++)
@@ -804,6 +853,8 @@ static void SendSync(void)
         data[2] = sHashValue[sLatestHashTurn % HASH_TURNS] >> 8;
         data[3] = 1;
     }
+    // "I am waiting for your choice" (this game waited within the last frames)
+    data[4] = (u16)(sBattleFrame - sLastWaitFrame) <= 3;
     PushMessage(REMOTE_EVENT_BSYNC, sRole == ROLE_GUEST, sInNext, sSession, data);
 }
 
@@ -988,15 +1039,18 @@ void RemoteBattle_CaptureOne(u8 battler, u16 ret)
     RemoteBattle_ClearItemEffect();
 }
 
-#define BATTLE_WAIT_SHOW_FRAMES 90   // short waits stay unannounced
+#define BATTLE_WAIT_SHOW_FRAMES 30   // very short waits stay unannounced
 
 static EWRAM_DATA bool8 sBattleWaitShown = FALSE;
+
+static const u8 sText_WaitingNoSignal[] = _("Waiting for the other player...\nNo signal yet.");
 
 static void HideBattleWait(void)
 {
     if (!sBattleWaitShown)
         return;
     sBattleWaitShown = FALSE;
+    sWaitMsgState = 0;
     BattlePutTextOnWindow(gText_EmptyString3, B_WIN_MSG);
 }
 
@@ -1007,19 +1061,44 @@ bool8 RemoteBattle_PopChoice(struct RemoteChoice *choice)
     *choice = sIn[sInRead & (CHOICE_RING - 1)];
     sInRead++;
     sWaitFrames = 0;
+    sDeadlockFrames = 0;
     HideBattleWait();
     return TRUE;
 }
 
+// Called every frame while this game waits for the other player's choice.
+// TRUE when the other game can no longer be reached (or both wait for each
+// other for good): from then on the game plays that battler itself.
 bool8 RemoteBattle_WaitTimedOut(void)
 {
-    ++sWaitFrames;
-    if (sWaitFrames == BATTLE_WAIT_SHOW_FRAMES && !sBattleWaitShown)
+    bool8 quiet = (u16)(sBattleFrame - sLastHeardFrame) >= LINK_QUIET_FRAMES;
+    bool8 peerWaits = sPeerWaiting && (u16)(sBattleFrame - sPeerWaitFrame) <= 60;
+
+    sLastWaitFrame = sBattleFrame;
+    if (sWaitFrames < 0xFFFF)
+        ++sWaitFrames;
+
+    // The message goes up quickly and says when no news arrives at all.
+    if (sWaitFrames >= BATTLE_WAIT_SHOW_FRAMES)
     {
-        BattlePutTextOnWindow(sText_WaitingForPlayer, B_WIN_MSG);
-        sBattleWaitShown = TRUE;
+        u8 want = quiet ? 2 : 1;
+
+        if (!sBattleWaitShown || sWaitMsgState != want)
+        {
+            BattlePutTextOnWindow(want == 2 ? sText_WaitingNoSignal : sText_WaitingForPlayer, B_WIN_MSG);
+            sBattleWaitShown = TRUE;
+            sWaitMsgState = want;
+        }
     }
-    if (sWaitFrames >= REMOTE_WAIT_FRAMES)
+
+    // Both games wait for each other and everything sent was received:
+    // nothing can ever arrive.
+    if (peerWaits && sOutAcked == sOutNext && sWaitFrames >= BATTLE_WAIT_SHOW_FRAMES)
+        sDeadlockFrames++;
+    else
+        sDeadlockFrames = 0;
+
+    if ((u16)(sBattleFrame - sLastHeardFrame) >= LINK_DEAD_FRAMES || sDeadlockFrames >= DEADLOCK_FRAMES)
     {
         HideBattleWait();
         return TRUE;
@@ -1618,4 +1697,14 @@ u8 RemoteBattle_GetPartnerBackPic(void)
     if (gRemoteBattleActive)
         return sPartnerGender == FEMALE ? TRAINER_BACK_PIC_MAY : TRAINER_BACK_PIC_BRENDAN;
     return TRAINER_BACK_PIC_STEVEN;
+}
+
+// The other player's phrase (0 start, 1 won, 2 lost) as battle text, in
+// gStringVar4. Their words are shown as they chose them at their PC.
+void RemoteBattle_VersusPhraseToString(u8 which)
+{
+    if (sPartnerSlot < REMOTE_MAX_PLAYERS && which < PHRASE_COUNT && sPeers[sPartnerSlot].ready)
+        FrontierSpeechToString(sPeers[sPartnerSlot].phrases[which]);
+    else
+        gStringVar4[0] = EOS;
 }

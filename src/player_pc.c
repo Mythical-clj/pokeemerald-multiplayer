@@ -33,6 +33,9 @@
 
 extern const u8 PlayerLook_EventScript_Appearance[];
 extern const u8 PlayerLook_EventScript_OutfitOnly[];
+extern const u8 PlayerLook_EventScript_PhrasesBedroom[];
+extern const u8 PlayerLook_EventScript_PhrasesPC[];
+extern const u8 gText_Phrases[];
 extern const u8 gText_Appearance[];
 
 // Top level PC menu options
@@ -41,7 +44,8 @@ enum {
     MENU_MAILBOX,
     MENU_DECORATION,
     MENU_TURNOFF,
-    MENU_APPEARANCE
+    MENU_APPEARANCE,
+    MENU_PHRASES
 };
 
 // Item storage menu options
@@ -121,6 +125,7 @@ static void PlayerPC_Mailbox(u8);
 static void PlayerPC_Decoration(u8);
 static void PlayerPC_TurnOff(u8);
 static void PlayerPC_Appearance(u8);
+static void PlayerPC_Phrases(u8);
 
 static void Mailbox_DoMailMoveToBag(u8);
 static void Mailbox_DoMailRead(u8);
@@ -202,7 +207,8 @@ static const struct MenuAction sPlayerPCMenuActions[] =
     [MENU_MAILBOX]     = { gText_Mailbox,     {PlayerPC_Mailbox} },
     [MENU_DECORATION]  = { gText_Decoration,  {PlayerPC_Decoration} },
     [MENU_TURNOFF]     = { gText_TurnOff,     {PlayerPC_TurnOff} },
-    [MENU_APPEARANCE]  = { gText_Appearance,  {PlayerPC_Appearance} }
+    [MENU_APPEARANCE]  = { gText_Appearance,  {PlayerPC_Appearance} },
+    [MENU_PHRASES]     = { gText_Phrases,     {PlayerPC_Phrases} }
 };
 
 static const u8 sBedroomPC_OptionOrder[] =
@@ -211,6 +217,7 @@ static const u8 sBedroomPC_OptionOrder[] =
     MENU_MAILBOX,
     MENU_DECORATION,
     MENU_APPEARANCE,
+    MENU_PHRASES,
     MENU_TURNOFF
 };
 #define NUM_BEDROOM_PC_OPTIONS ARRAY_COUNT(sBedroomPC_OptionOrder)
@@ -220,6 +227,7 @@ static const u8 sPlayerPC_OptionOrder[] =
     MENU_ITEMSTORAGE,
     MENU_MAILBOX,
     MENU_APPEARANCE,
+    MENU_PHRASES,
     MENU_TURNOFF
 };
 #define NUM_PLAYER_PC_OPTIONS ARRAY_COUNT(sPlayerPC_OptionOrder)
@@ -253,7 +261,7 @@ static const struct WindowTemplate sWindowTemplates_MainMenus[] =
         .tilemapLeft = 1,
         .tilemapTop = 1,
         .width = 9,
-        .height = 8,
+        .height = 10,
         .paletteNum = 15,
         .baseBlock = 1
     },
@@ -262,7 +270,7 @@ static const struct WindowTemplate sWindowTemplates_MainMenus[] =
         .tilemapLeft = 1,
         .tilemapTop = 1,
         .width = 9,
-        .height = 10,
+        .height = 12,
         .paletteNum = 15,
         .baseBlock = 1
     },
@@ -506,6 +514,15 @@ static void PlayerPC_Appearance(u8 taskId)
         ScriptContext_SetupScript(PlayerLook_EventScript_Appearance);
     else
         ScriptContext_SetupScript(PlayerLook_EventScript_OutfitOnly);
+    DestroyTask(taskId);
+}
+
+static void PlayerPC_Phrases(u8 taskId)
+{
+    if (sTopMenuNumOptions == NUM_BEDROOM_PC_OPTIONS)
+        ScriptContext_SetupScript(PlayerLook_EventScript_PhrasesBedroom);
+    else
+        ScriptContext_SetupScript(PlayerLook_EventScript_PhrasesPC);
     DestroyTask(taskId);
 }
 

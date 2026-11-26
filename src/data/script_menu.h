@@ -810,6 +810,18 @@ static const u8 sText_LookPink[] = _("Pink");
 static const u8 sText_LookDarkGrey[] = _("Dark grey");
 static const u8 sText_LookLightGrey[] = _("Light grey");
 
+static const u8 sText_PhraseStart[] = _("Battle start");
+static const u8 sText_PhraseWon[] = _("When I win");
+static const u8 sText_PhraseLost[] = _("When I lose");
+
+static const struct MenuAction MultichoiceList_PlayerPhrases[] =
+{
+    {sText_PhraseStart},
+    {sText_PhraseWon},
+    {sText_PhraseLost},
+    {sText_LookDone},
+};
+
 static const struct MenuAction MultichoiceList_PlayerLookTop[] =
 {
     {sText_LookSkin},
@@ -955,6 +967,7 @@ static const struct MultichoiceListStruct sMultichoiceLists[] =
     [MULTI_PLAYER_LOOK_TOP]            = MULTICHOICE(MultichoiceList_PlayerLookTop),
     [MULTI_PLAYER_LOOK_SKIN]           = MULTICHOICE(MultichoiceList_PlayerLookSkin),
     [MULTI_PLAYER_LOOK_OUTFIT]         = MULTICHOICE(MultichoiceList_PlayerLookOutfit),
+    [MULTI_PLAYER_PHRASES]             = MULTICHOICE(MultichoiceList_PlayerPhrases),
 };
 
 const u8 *const gStdStrings[] =

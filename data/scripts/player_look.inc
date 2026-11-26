@@ -53,6 +53,70 @@ PlayerLook_EventScript_OutfitOnlyBack::
 	goto EventScript_PCMainMenu
 	end
 
+@ Phrases: the three battle phrases (start, won, lost), at any PC.
+@ The "won" and "lost" phrases are what the other player sees when you
+@ beat them or lose to them in a versus battle.
+PlayerLook_EventScript_PhrasesBedroom::
+	message PlayerLook_Text_WhichPhrase
+	waitmessage
+	multichoice 0, 0, MULTI_PLAYER_PHRASES, FALSE
+	switch VAR_RESULT
+	case 0, PlayerLook_EventScript_PhraseStartBedroom
+	case 1, PlayerLook_EventScript_PhraseWonBedroom
+	case 2, PlayerLook_EventScript_PhraseLostBedroom
+	goto PlayerLook_EventScript_Back
+	end
+
+PlayerLook_EventScript_PhraseStartBedroom::
+	setvar VAR_0x8004, EASY_CHAT_TYPE_BATTLE_START
+	call Common_ShowEasyChatScreen
+	goto PlayerLook_EventScript_PhrasesBedroom
+	end
+
+PlayerLook_EventScript_PhraseWonBedroom::
+	setvar VAR_0x8004, EASY_CHAT_TYPE_BATTLE_WON
+	call Common_ShowEasyChatScreen
+	goto PlayerLook_EventScript_PhrasesBedroom
+	end
+
+PlayerLook_EventScript_PhraseLostBedroom::
+	setvar VAR_0x8004, EASY_CHAT_TYPE_BATTLE_LOST
+	call Common_ShowEasyChatScreen
+	goto PlayerLook_EventScript_PhrasesBedroom
+	end
+
+PlayerLook_EventScript_PhrasesPC::
+	message PlayerLook_Text_WhichPhrase
+	waitmessage
+	multichoice 0, 0, MULTI_PLAYER_PHRASES, FALSE
+	switch VAR_RESULT
+	case 0, PlayerLook_EventScript_PhraseStartPC
+	case 1, PlayerLook_EventScript_PhraseWonPC
+	case 2, PlayerLook_EventScript_PhraseLostPC
+	goto PlayerLook_EventScript_OutfitOnlyBack
+	end
+
+PlayerLook_EventScript_PhraseStartPC::
+	setvar VAR_0x8004, EASY_CHAT_TYPE_BATTLE_START
+	call Common_ShowEasyChatScreen
+	goto PlayerLook_EventScript_PhrasesPC
+	end
+
+PlayerLook_EventScript_PhraseWonPC::
+	setvar VAR_0x8004, EASY_CHAT_TYPE_BATTLE_WON
+	call Common_ShowEasyChatScreen
+	goto PlayerLook_EventScript_PhrasesPC
+	end
+
+PlayerLook_EventScript_PhraseLostPC::
+	setvar VAR_0x8004, EASY_CHAT_TYPE_BATTLE_LOST
+	call Common_ShowEasyChatScreen
+	goto PlayerLook_EventScript_PhrasesPC
+	end
+
+PlayerLook_Text_WhichPhrase:
+	.string "Which phrase would you like to set?$"
+
 PlayerLook_Text_WhatToChange:
 	.string "What would you like to change?$"
 

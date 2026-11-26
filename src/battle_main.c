@@ -5081,6 +5081,11 @@ static void HandleEndTurn_BattleLost(void)
             gBattleOutcome &= ~B_OUTCOME_LINK_BATTLE_RAN;
         }
     }
+    else if (gRemoteVersus)
+    {
+        gBattlerAttacker = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
+        gBattlescriptCurrInstr = BattleScript_VersusBattleLost;
+    }
     else
     {
         gBattlescriptCurrInstr = BattleScript_LocalBattleLost;

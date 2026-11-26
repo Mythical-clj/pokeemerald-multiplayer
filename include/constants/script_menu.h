@@ -126,6 +126,7 @@
 #define MULTI_PLAYER_LOOK_TOP              115
 #define MULTI_PLAYER_LOOK_SKIN             116
 #define MULTI_PLAYER_LOOK_OUTFIT           117
+#define MULTI_PLAYER_PHRASES               118
 
 // Lilycove SS Tidal Multichoice Selections
 #define SSTIDAL_SELECTION_SLATEPORT        0
