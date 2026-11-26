@@ -214,10 +214,16 @@ void PlayerLook_ApplyToObject(struct ObjectEvent *object, u8 packed)
 
 // The player's parents have the player's skin tone: Mom and Norman in the
 // overworld (the shared NPC palette is copied with the skin colours changed).
+extern u8 RemotePlayer_HostSkin(void);
+
 void PlayerLook_UpdateParents(void)
 {
     u8 skin = PlayerLook_Pack() & 3;
+    u8 host = RemotePlayer_HostSkin();
     u8 i;
+
+    if (host != 0xFF && host < PLAYER_LOOK_SKINS)
+        skin = host;
 
     for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
     {

@@ -321,6 +321,11 @@ static void RxWord(u8 lane, u16 word)
     }
 }
 
+u8 RemoteSio_GetMyId(void)
+{
+    return sMyId;
+}
+
 void RemoteSio_Init(void)
 {
     u8 i;
@@ -484,6 +489,7 @@ void RemoteSio_GameLinkClosed(void)
 
 #else // !REMOTE_PLAYER_SIO
 
+u8 RemoteSio_GetMyId(void) { return 0; }
 void RemoteSio_Init(void) {}
 void RemoteSio_Tick(void) {}
 void RemoteSio_VBlank(void) {}

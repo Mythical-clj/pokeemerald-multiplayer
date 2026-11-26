@@ -27,6 +27,7 @@
 // Detects an emulator and, if there is one, sets up the mailbox in place of
 // the serial port. Call once at start-up.
 void RemoteSio_Init(void);
+u8 RemoteSio_GetMyId(void);   // 0 = the host of the link
 
 // Called every frame from the overworld; takes the port if the game is not
 // using it.

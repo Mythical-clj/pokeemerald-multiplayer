@@ -118,7 +118,10 @@ static EWRAM_DATA u32 sMixIn[REMOTE_MIX_MAX_BYTES / 4] = {0};
 static EWRAM_DATA u8 sMixGot[256] = {0};
 static EWRAM_DATA u16 sMixGotCount = 0;
 static EWRAM_DATA u16 sMixTheirSum = 0;
+static EWRAM_DATA u16 sMixNeed = 0;
+static EWRAM_DATA bool8 sMixHaveSum = FALSE;
 static EWRAM_DATA u8 sMixCursor = 0;
+static EWRAM_DATA u16 sMixPieces = 0;       // pieces that are not empty
 static EWRAM_DATA bool8 sMixSending = FALSE;
 static EWRAM_DATA bool8 sHaveMix = FALSE;
 
@@ -258,6 +261,9 @@ static void ClearMix(void)
     sHaveMix = FALSE;
     sMixCursor = 0;
     sMixGotCount = 0;
+    sMixNeed = 0;
+    sMixHaveSum = FALSE;
+    memset(sMixIn, 0, sizeof(sMixIn));
     for (i = 0; i < 256; i++)
         sMixGot[i] = FALSE;
 }
@@ -406,6 +412,35 @@ static void StoreChunk(u8 index, const u8 *data)
     }
 }
 
+// A record is mostly zeros (empty TV shows, empty secret bases), so only the
+// 6-byte pieces that are not all zero are sent, plus a last message with the
+// checksum and how many pieces to expect. The receiver starts from zeros.
+static bool8 MixPieceIsEmpty(const u8 *bytes, u16 size, u8 index)
+{
+    u8 i;
+
+    for (i = 0; i < 6; i++)
+    {
+        u16 at = index * 6 + i;
+
+        if (at < size && bytes[at] != 0)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static void ResetMixReceive(void)
+{
+    u16 i;
+
+    sMixGotCount = 0;
+    sMixNeed = 0;
+    sMixHaveSum = FALSE;
+    for (i = 0; i < ARRAY_COUNT(sMixGot); i++)
+        sMixGot[i] = FALSE;
+    memset(sMixIn, 0, sizeof(sMixIn));
+}
+
 static void StoreMixChunk(u8 index, const u8 *data)
 {
     u8 *dest = (u8 *)sMixIn;
@@ -418,6 +453,8 @@ static void StoreMixChunk(u8 index, const u8 *data)
     if (index == chunks)
     {
         sMixTheirSum = data[0] | (data[1] << 8);
+        sMixNeed = data[2] | (data[3] << 8);
+        sMixHaveSum = TRUE;
     }
     else
     {
@@ -428,21 +465,15 @@ static void StoreMixChunk(u8 index, const u8 *data)
             if (at < size)
                 dest[at] = data[i];
         }
+        sMixGotCount++;
     }
     sMixGot[index] = TRUE;
-    sMixGotCount++;
-    if (sMixGotCount == chunks + 1)
+    if (sMixHaveSum && sMixGotCount >= sMixNeed)
     {
         if (Checksum(dest, size) == sMixTheirSum)
-        {
             sHaveMix = TRUE;
-        }
         else
-        {
-            sMixGotCount = 0;
-            for (i = 0; i <= chunks; i++)
-                sMixGot[i] = FALSE;
-        }
+            ResetMixReceive();
     }
 }
 
@@ -622,15 +653,18 @@ void RemoteSocial_Tick(void)
                 u8 data[6];
                 u8 i;
                 u8 chunks = MixChunks();
+                u16 size = RemoteMix_GetSize();
 
                 if (sMixCursor == chunks)
                 {
-                    u16 sum = Checksum((u8 *)sMixOut, RemoteMix_GetSize());
+                    u16 sum = Checksum((u8 *)sMixOut, size);
 
                     data[0] = sum & 0xFF;
                     data[1] = sum >> 8;
-                    for (i = 2; i < 6; i++)
-                        data[i] = 0;
+                    data[2] = sMixPieces & 0xFF;
+                    data[3] = sMixPieces >> 8;
+                    data[4] = 0;
+                    data[5] = 0;
                 }
                 else
                 {
@@ -638,11 +672,24 @@ void RemoteSocial_Tick(void)
                     {
                         u16 at = sMixCursor * 6 + i;
 
-                        data[i] = at < RemoteMix_GetSize() ? ((u8 *)sMixOut)[at] : 0;
+                        data[i] = at < size ? ((u8 *)sMixOut)[at] : 0;
                     }
                 }
                 if (Send(SUB_MIXCHUNK, sMixCursor, sSession, data))
-                    sMixCursor = (sMixCursor + 1) % (chunks + 1);
+                {
+                    // Next piece that is not empty, then the checksum, then again.
+                    u8 next = sMixCursor + 1;
+
+                    while (next < chunks && MixPieceIsEmpty((u8 *)sMixOut, size, next))
+                        next++;
+                    if (sMixCursor == chunks)
+                    {
+                        next = 0;
+                        while (next < chunks && MixPieceIsEmpty((u8 *)sMixOut, size, next))
+                            next++;
+                    }
+                    sMixCursor = next;
+                }
             }
             // "I have yours": the other side stops sending when it hears this.
             if (sHaveMix && sFrame % REPLY_REPEAT_FRAMES == 0)
@@ -925,8 +972,21 @@ void RemoteSocial_FinishTrade(void)
 
 void RemoteSocial_StartMix(void)
 {
-    RemoteMix_Build(sMixOut);
-    sMixCursor = 0;
+    {
+        u8 i, chunks;
+        u16 size;
+
+        RemoteMix_Build(sMixOut);
+        size = RemoteMix_GetSize();
+        chunks = MixChunks();
+        sMixPieces = 0;
+        sMixCursor = chunks;        // the checksum goes first, then the pieces
+        for (i = 0; i < chunks; i++)
+        {
+            if (!MixPieceIsEmpty((u8 *)sMixOut, size, i))
+                sMixPieces++;
+        }
+    }
     sMixSending = TRUE;
     sTimer = 0;
     StringCopy(gStringVar1, RemoteBattle_GetNameOfSlot(sPeer) != NULL ? RemoteBattle_GetNameOfSlot(sPeer) : gText_Friend);

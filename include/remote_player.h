@@ -76,4 +76,6 @@ bool8 RemotePlayer_FindNearby(u8 maxDistance, u8 *slot, u8 *gender);
 // Overwrites a save-file object event slot so it looks never used.
 void ClearRemotePlayerSaveEntry(struct ObjectEvent *entry);
 
+u8 RemotePlayer_HostSkin(void);
+
 #endif // GUARD_REMOTE_PLAYER_H

@@ -950,6 +950,17 @@ void RemotePlayer_StartDrop(u8 slot)
         sSlots[slot].dropY = 96;
 }
 
+// Skin tone the player's parents should wear while the host of the link is
+// on this map: the host's own. 0xFF = nobody to follow (use my own tone).
+u8 RemotePlayer_HostSkin(void)
+{
+    if (RemoteSio_GetMyId() == 0)
+        return 0xFF;
+    if (sSlots[0].spawned && sSlots[0].objectId < OBJECT_EVENTS_COUNT && gObjectEvents[sSlots[0].objectId].active)
+        return sSlots[0].look & 3;
+    return 0xFF;
+}
+
 static void TickLook(u8 i)
 {
     struct RemoteSlot *slot = &sSlots[i];
