@@ -181,6 +181,7 @@ static EWRAM_DATA struct PeerTeam sPeers[REMOTE_MAX_PLAYERS] = {0};
 static EWRAM_DATA struct Pokemon sSendMons[SEND_SIZE] = {0};
 static EWRAM_DATA u8 sSendName[NAME_BYTES] = {0};
 static EWRAM_DATA u8 sSendTag = 0;
+static EWRAM_DATA u32 sSendHash = 0;
 static EWRAM_DATA u8 sSendPick[SEND_SIZE] = {0};
 static EWRAM_DATA u8 sSendCount = 0;
 static EWRAM_DATA bool8 sSendValid = FALSE;
@@ -291,7 +292,8 @@ static void RefreshSendBuffer(void)
     u8 pick[SEND_SIZE];
     u8 count = BuildTeamOf(pick, SEND_SIZE);
     u16 i;
-    u8 tag = 0;
+    u8 tag;
+    u32 hash;
 
     for (i = 0; i < SEND_SIZE; i++)
     {
@@ -304,10 +306,19 @@ static void RefreshSendBuffer(void)
         sSendName[i] = EOS;
     StringCopyN(sSendName, gSaveBlock2Ptr->playerName, PLAYER_NAME_LENGTH);
 
+    // The tag says "this is the same team as before". It has to change
+    // whenever the team does, order included: a weak checksum let some
+    // reorderings (swapping the 1st and 3rd, say) keep the same tag, so the
+    // other game kept the old order and showed the wrong Pokemon.
+    hash = 2166136261u;
     for (i = 0; i < PAYLOAD_BYTES; i++)
-        tag = ((tag << 1) | (tag >> 7)) ^ SendByte(i);
+        hash = (hash ^ SendByte(i)) * 16777619u;
+    tag = (hash ^ (hash >> 8) ^ (hash >> 16) ^ (hash >> 24)) & 0xFF;
     if (tag == 0)
         tag = 1;
+    if (hash != sSendHash && tag == sSendTag)
+        tag = (tag == 255) ? 1 : tag + 1;
+    sSendHash = hash;
 
     for (i = 0; i < count; i++)
         sSendPick[i] = pick[i];
@@ -1588,6 +1599,13 @@ const u8 *RemoteBattle_GetNameOfSlot(u8 slot)
 const u8 *RemoteBattle_GetPartnerName(void)
 {
     return sPartnerName;
+}
+
+// The other player's look for the trainer shown as the opponent in a
+// friendly battle.
+u8 RemoteBattle_GetVersusLook(void)
+{
+    return gRemoteVersus ? sPartnerLook : 0;
 }
 
 u8 RemoteBattle_GetPartnerLook(void)

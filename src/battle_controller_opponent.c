@@ -1,5 +1,6 @@
 #include "global.h"
 #include "remote_battle.h"
+#include "player_look.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"
 #include "battle_anim.h"
@@ -1317,6 +1318,13 @@ static void OpponentHandleDrawTrainerPic(void)
     }
 
     DecompressTrainerFrontPic(trainerPicId, gActiveBattler);
+    if (gRemoteVersus)
+    {
+        u8 palIdx = IndexOfSpritePaletteTag(gTrainerFrontPicPaletteTable[trainerPicId].tag);
+
+        if (palIdx != 0xFF)
+            PlayerLook_ApplyToLoaded(OBJ_PLTT_ID(palIdx), trainerPicId == TRAINER_PIC_MAY, RemoteBattle_GetVersusLook());
+    }
     SetMultiuseSpriteTemplateToTrainerBack(trainerPicId, GetBattlerPosition(gActiveBattler));
     gBattlerSpriteIds[gActiveBattler] = CreateSprite(&gMultiuseSpriteTemplate,
                                                xPos,
@@ -1395,6 +1403,13 @@ static void OpponentHandleTrainerSlide(void)
     }
 
     DecompressTrainerFrontPic(trainerPicId, gActiveBattler);
+    if (gRemoteVersus)
+    {
+        u8 palIdx = IndexOfSpritePaletteTag(gTrainerFrontPicPaletteTable[trainerPicId].tag);
+
+        if (palIdx != 0xFF)
+            PlayerLook_ApplyToLoaded(OBJ_PLTT_ID(palIdx), trainerPicId == TRAINER_PIC_MAY, RemoteBattle_GetVersusLook());
+    }
     SetMultiuseSpriteTemplateToTrainerBack(trainerPicId, GetBattlerPosition(gActiveBattler));
     gBattlerSpriteIds[gActiveBattler] = CreateSprite(&gMultiuseSpriteTemplate, 176, (8 - gTrainerFrontPicCoords[trainerPicId].size) * 4 + 40, 0x1E);
 
