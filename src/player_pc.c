@@ -32,6 +32,7 @@
 #include "player_look.h"
 
 extern const u8 PlayerLook_EventScript_Appearance[];
+extern const u8 PlayerLook_EventScript_OutfitOnly[];
 extern const u8 gText_Appearance[];
 
 // Top level PC menu options
@@ -218,6 +219,7 @@ static const u8 sPlayerPC_OptionOrder[] =
 {
     MENU_ITEMSTORAGE,
     MENU_MAILBOX,
+    MENU_APPEARANCE,
     MENU_TURNOFF
 };
 #define NUM_PLAYER_PC_OPTIONS ARRAY_COUNT(sPlayerPC_OptionOrder)
@@ -251,7 +253,7 @@ static const struct WindowTemplate sWindowTemplates_MainMenus[] =
         .tilemapLeft = 1,
         .tilemapTop = 1,
         .width = 9,
-        .height = 6,
+        .height = 8,
         .paletteNum = 15,
         .baseBlock = 1
     },
@@ -499,7 +501,11 @@ static void PlayerPC_Decoration(u8 taskId)
 
 static void PlayerPC_Appearance(u8 taskId)
 {
-    ScriptContext_SetupScript(PlayerLook_EventScript_Appearance);
+    // Skin tone is only changed in the bedroom; Pokemon Center PCs do outfits.
+    if (sTopMenuNumOptions == NUM_BEDROOM_PC_OPTIONS)
+        ScriptContext_SetupScript(PlayerLook_EventScript_Appearance);
+    else
+        ScriptContext_SetupScript(PlayerLook_EventScript_OutfitOnly);
     DestroyTask(taskId);
 }
 

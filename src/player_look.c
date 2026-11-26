@@ -46,6 +46,22 @@ extern const u16 gObjectEventPal_MayReflection[];
 
 #define LOOK_PAL_TAG_BASE 0xB100
 
+// Look palettes are allocated per look and the sprite palette slots are few,
+// so drop the ones nothing is asking for any more; they are rebuilt on demand.
+static void FreeLookPalettes(void)
+{
+    u8 kind, packed;
+
+    for (kind = 0; kind < 3; kind++)
+    {
+        for (packed = 1; packed < 32; packed++)
+        {
+            FreeSpritePaletteByTag(LOOK_PAL_TAG_BASE + kind * 32 + packed);
+            FreeSpritePaletteByTag(LOOK_PAL_TAG_BASE + 0x100 + kind * 32 + packed);
+        }
+    }
+}
+
 u8 PlayerLook_Pack(void)
 {
     u16 v = VarGet(LOOK_VAR);
@@ -66,6 +82,8 @@ void PlayerLook_SetSkin(u8 skin)
     if (skin >= PLAYER_LOOK_SKINS)
         skin = 0;
     VarSet(LOOK_VAR, (p & ~3) | skin);
+    FreeLookPalettes();
+    PlayerLook_UpdateLocal();
 }
 
 void PlayerLook_SetOutfit(u8 outfit)
@@ -75,6 +93,8 @@ void PlayerLook_SetOutfit(u8 outfit)
     if (outfit >= PLAYER_LOOK_OUTFITS)
         outfit = 0;
     VarSet(LOOK_VAR, (p & 3) | (outfit << 2));
+    FreeLookPalettes();
+    PlayerLook_UpdateLocal();
 }
 
 void PlayerLook_ApplyBuffer(u16 *pal, u8 female, u8 packed)
@@ -168,6 +188,11 @@ void PlayerLook_ApplyToObject(struct ObjectEvent *object, u8 packed)
         sp.tag = tag;
         idx = LoadSpritePalette(&sp);
         if (idx == 0xFF)
+        {
+            FreeLookPalettes();
+            idx = LoadSpritePalette(&sp);
+        }
+        if (idx == 0xFF)
             return;
         UpdateSpritePaletteWithWeather(idx);
     }
@@ -254,6 +279,11 @@ void PlayerLook_ApplyToReflection(struct ObjectEvent *object, struct Sprite *ref
         sp.data = buf;
         sp.tag = tag;
         idx = LoadSpritePalette(&sp);
+        if (idx == 0xFF)
+        {
+            FreeLookPalettes();
+            idx = LoadSpritePalette(&sp);
+        }
         if (idx == 0xFF)
             return;
         UpdateSpritePaletteWithWeather(idx);

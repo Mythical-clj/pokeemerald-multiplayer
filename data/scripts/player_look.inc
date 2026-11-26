@@ -36,6 +36,23 @@ PlayerLook_EventScript_Back::
 	releaseall
 	end
 
+@ Pokemon Center PC: outfit colour only (skin tone is a bedroom setting).
+PlayerLook_EventScript_OutfitOnly::
+	message PlayerLook_Text_PickOutfit
+	waitmessage
+	multichoice 0, 0, MULTI_PLAYER_LOOK_OUTFIT, FALSE
+	goto_if_eq VAR_RESULT, MULTI_B_PRESSED, PlayerLook_EventScript_OutfitOnlyBack
+	copyvar VAR_0x8004, VAR_RESULT
+	special PlayerLook_SetOutfitFromVar
+	goto PlayerLook_EventScript_OutfitOnly
+	end
+
+PlayerLook_EventScript_OutfitOnlyBack::
+	closemessage
+	special PlayerPC
+	goto EventScript_PCMainMenu
+	end
+
 PlayerLook_Text_WhatToChange:
 	.string "What would you like to change?$"
 
