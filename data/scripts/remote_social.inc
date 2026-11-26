@@ -137,6 +137,8 @@ RemoteSocial_EventScript_TradeAgreed::
 	playfanfare MUS_OBTAIN_ITEM
 	msgbox RemoteSocial_Text_TradeDone, MSGBOX_DEFAULT
 	waitfanfare
+	special RemoteSocial_TradeEvolve
+	waitstate
 	goto RemoteSocial_EventScript_Done
 	end
 

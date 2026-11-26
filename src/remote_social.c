@@ -1,5 +1,6 @@
 #include "global.h"
 #include "easy_chat.h"
+#include "evolution_scene.h"
 #include "event_data.h"
 #include "field_player_avatar.h"
 #include "main.h"
@@ -966,6 +967,32 @@ void RemoteSocial_FinishTrade(void)
     sTimer = 0;
     sPhase = PHASE_CONFIRMED;
     gSpecialVar_Result = TRUE;
+}
+
+// A traded Pokemon that evolves by trade does so now, but only after the
+// closing acknowledgements are done (the evolution scene stops this module's
+// per-frame work, and the other player may still be waiting for our "OK").
+static void Task_TradeEvolve(u8 taskId)
+{
+    struct Pokemon *mon = &gPlayerParty[sOfferSlot];
+    u16 target;
+
+    if (sState != ST_IDLE)
+        return;
+    DestroyTask(taskId);
+    target = GetEvolutionTargetSpecies(mon, EVO_MODE_TRADE, ITEM_NONE);
+    if (target == SPECIES_NONE)
+    {
+        ScriptContext_Enable();
+        return;
+    }
+    gCB2_AfterEvolution = CB2_ReturnToFieldContinueScriptPlayMapMusic;
+    BeginEvolutionScene(mon, target, FALSE, sOfferSlot);
+}
+
+void RemoteSocial_TradeEvolve(void)
+{
+    CreateTask(Task_TradeEvolve, 80);
 }
 
 // ---- Record mixing --------------------------------------------------------
