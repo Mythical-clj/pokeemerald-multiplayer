@@ -1,4 +1,5 @@
 #include "global.h"
+#include "player_look.h"
 #include "hall_of_fame.h"
 #include "task.h"
 #include "palette.h"
@@ -701,6 +702,7 @@ static void Task_Hof_DisplayPlayer(u8 taskId)
     ShowBg(1);
     ShowBg(3);
     gTasks[taskId].tPlayerSpriteID = CreateTrainerPicSprite(PlayerGenderToFrontTrainerPicId_Debug(gSaveBlock2Ptr->playerGender, TRUE), TRUE, 120, 72, 6, TAG_NONE);
+    PlayerLook_ApplyToLoaded(OBJ_PLTT_ID(6), gSaveBlock2Ptr->playerGender == FEMALE, PlayerLook_Pack());
     AddWindow(&sHof_WindowTemplate);
     LoadWindowGfx(1, gSaveBlock2Ptr->optionsWindowFrameType, 0x21D, BG_PLTT_ID(13));
     LoadPalette(GetTextWindowPalette(1), BG_PLTT_ID(14), PLTT_SIZE_4BPP);

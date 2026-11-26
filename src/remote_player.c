@@ -230,6 +230,18 @@ u8 RemotePlayer_NextTxSeq(void)
     return sTxSeq++;
 }
 
+u8 RemotePlayer_LookOfObject(u8 objectId)
+{
+    u8 i;
+
+    for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
+    {
+        if (sSlots[i].objectId == objectId)
+            return sSlots[i].look;
+    }
+    return 0;
+}
+
 u8 RemotePlayer_GetLook(u8 slot)
 {
     return slot < REMOTE_MAX_PLAYERS ? sSlots[slot].look : 0;

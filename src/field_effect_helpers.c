@@ -9,6 +9,7 @@
 #include "metatile_behavior.h"
 #include "sound.h"
 #include "sprite.h"
+#include "player_look.h"
 #include "trig.h"
 #include "constants/field_effects.h"
 #include "constants/songs.h"
@@ -132,6 +133,8 @@ static void UpdateObjectReflectionSprite(struct Sprite *reflectionSprite)
     else
     {
         reflectionSprite->oam.paletteNum = gReflectionEffectPaletteMap[mainSprite->oam.paletteNum];
+        if (reflectionSprite->sReflectionVerticalOffset == 0) // not the solid bridge reflection
+            PlayerLook_ApplyToReflection(objectEvent, reflectionSprite);
         reflectionSprite->oam.shape = mainSprite->oam.shape;
         reflectionSprite->oam.size = mainSprite->oam.size;
         reflectionSprite->oam.matrixNum = mainSprite->oam.matrixNum | ST_OAM_VFLIP;

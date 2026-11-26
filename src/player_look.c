@@ -34,11 +34,16 @@ static const u16 sOutfitRamps[PLAYER_LOOK_OUTFITS][4] =
     {C8(98, 123, 189), C8(74, 90, 156), C8(49, 65, 115), C8(24, 41, 82)},      // blue
     {C8(115, 205, 115), C8(74, 148, 82), C8(41, 106, 57), C8(24, 74, 41)},     // green
     {C8(172, 123, 213), C8(139, 90, 181), C8(106, 57, 148), C8(74, 33, 115)},  // purple
+    {C8(255, 156, 206), C8(230, 115, 173), C8(189, 74, 132), C8(140, 41, 90)}, // pink
+    {C8(82, 82, 90), C8(58, 58, 66), C8(41, 41, 49), C8(24, 24, 32)},          // dark grey
+    {C8(246, 246, 255), C8(222, 222, 235), C8(189, 189, 205), C8(148, 148, 165)}, // light grey
 };
 
 extern const u16 gObjectEventPal_Brendan[];
 extern const u16 gObjectEventPal_May[];
 extern const u16 gObjectEventPal_PlayerUnderwater[];
+extern const u16 gObjectEventPal_BrendanReflection[];
+extern const u16 gObjectEventPal_MayReflection[];
 
 #define LOOK_PAL_TAG_BASE 0xB100
 
@@ -193,4 +198,80 @@ void PlayerLook_SetSkinFromVar(void)
 void PlayerLook_SetOutfitFromVar(void)
 {
     PlayerLook_SetOutfit(gSpecialVar_0x8004);
+}
+
+// ---- Water reflections ------------------------------------------------------
+
+// A reflection is the same sprite in washed-out colours: the look's colours
+// are blended toward the water instead of used as they are.
+static u16 Reflect(u16 c, u16 water, u8 waterParts)
+{
+    u16 r = c & 0x1F, g = (c >> 5) & 0x1F, b = (c >> 10) & 0x1F;
+    u16 wr = water & 0x1F, wg = (water >> 5) & 0x1F, wb = (water >> 10) & 0x1F;
+
+    r = (r * (4 - waterParts) + wr * waterParts) / 4;
+    g = (g * (4 - waterParts) + wg * waterParts) / 4;
+    b = (b * (4 - waterParts) + wb * waterParts) / 4;
+    return r | (g << 5) | (b << 10);
+}
+
+extern u8 RemotePlayer_LookOfObject(u8 objectId);
+
+void PlayerLook_ApplyToReflection(struct ObjectEvent *object, struct Sprite *reflection)
+{
+    const struct ObjectEventGraphicsInfo *info = GetObjectEventGraphicsInfo(object->graphicsId);
+    u8 kind = BaseKind(info->paletteTag);
+    u8 packed, idx, i;
+    u16 tag;
+
+    if (kind > 1)
+        return;
+    if (object->isPlayer)
+        packed = PlayerLook_Pack();
+    else
+        packed = RemotePlayer_LookOfObject(object - gObjectEvents);
+    if (packed == 0)
+        return;
+
+    tag = LOOK_PAL_TAG_BASE + 0x100 + kind * 32 + packed;
+    idx = IndexOfSpritePaletteTag(tag);
+    if (idx == 0xFF)
+    {
+        u16 buf[16];
+        struct SpritePalette sp;
+        const u16 *base = kind == 0 ? gObjectEventPal_BrendanReflection : gObjectEventPal_MayReflection;
+        u16 look[16];
+
+        for (i = 0; i < 16; i++)
+        {
+            buf[i] = base[i];
+            look[i] = 0;
+        }
+        PlayerLook_ApplyBuffer(look, kind == 1, packed);
+        if ((packed & 3) != 0)
+        {
+            for (i = 1; i < 4; i++)
+                buf[i] = Reflect(look[i], C8(255, 235, 235), 1);
+        }
+        if (((packed >> 2) & 7) != 0)
+        {
+            if (kind == 1)
+            {
+                buf[12] = Reflect(look[12], C8(170, 175, 205), 2);
+                buf[13] = Reflect(look[13], C8(170, 175, 205), 2);
+            }
+            else
+            {
+                for (i = 5; i < 9; i++)
+                    buf[i] = Reflect(look[i], C8(170, 175, 205), 2);
+            }
+        }
+        sp.data = buf;
+        sp.tag = tag;
+        idx = LoadSpritePalette(&sp);
+        if (idx == 0xFF)
+            return;
+        UpdateSpritePaletteWithWeather(idx);
+    }
+    reflection->oam.paletteNum = idx;
 }

@@ -807,6 +807,9 @@ static const u8 sText_LookRed[] = _("Red");
 static const u8 sText_LookBlue[] = _("Blue");
 static const u8 sText_LookGreen[] = _("Green");
 static const u8 sText_LookPurple[] = _("Purple");
+static const u8 sText_LookPink[] = _("Pink");
+static const u8 sText_LookDarkGrey[] = _("Dark grey");
+static const u8 sText_LookLightGrey[] = _("Light grey");
 
 static const struct MenuAction MultichoiceList_PlayerLookTop[] =
 {
@@ -829,6 +832,9 @@ static const struct MenuAction MultichoiceList_PlayerLookOutfit[] =
     {sText_LookBlue},
     {sText_LookGreen},
     {sText_LookPurple},
+    {sText_LookPink},
+    {sText_LookDarkGrey},
+    {sText_LookLightGrey},
 };
 
 static const struct MultichoiceListStruct sMultichoiceLists[] =
