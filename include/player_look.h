@@ -21,6 +21,9 @@ void PlayerLook_ApplyToLoaded(u16 bufferOffset, u8 female, u8 packed);
 // Gives an overworld player object the palette for the look (or restores the
 // normal one for the default look).
 void PlayerLook_ApplyToObject(struct ObjectEvent *object, u8 packed);
+void PlayerLook_ApplySkinToLoaded(u16 bufferOffset);
+// Per frame: Mom and Norman take the player's skin tone.
+void PlayerLook_UpdateParents(void);
 // Per frame: the local player.
 void PlayerLook_UpdateLocal(void);
 // The water reflection of a player object (called every frame for its

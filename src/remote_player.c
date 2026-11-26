@@ -996,6 +996,7 @@ void RemotePlayer_Tick(void)
 #endif
 
     PlayerLook_UpdateLocal();
+    PlayerLook_UpdateParents();
     TrackPlayer();
     DrainRx();
     for (i = 0; i < REMOTE_MAX_PLAYERS; i++)

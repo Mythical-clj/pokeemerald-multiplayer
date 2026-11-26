@@ -5,6 +5,7 @@ RemoteSocial_EventScript_Interact::
 	special RemoteSocial_Prepare
 	goto_if_eq VAR_RESULT, 2, RemoteSocial_EventScript_Busy
 	goto_if_eq VAR_RESULT, 3, RemoteSocial_EventScript_NotReady
+	goto_if_eq VAR_RESULT, 4, RemoteSocial_EventScript_NoPokemon
 	message RemoteSocial_Text_WhatToDo
 	waitmessage
 	multichoice 0, 0, MULTI_REMOTE_SOCIAL, FALSE
@@ -23,6 +24,11 @@ RemoteSocial_EventScript_Done::
 
 RemoteSocial_EventScript_Busy::
 	msgbox RemoteSocial_Text_Busy, MSGBOX_DEFAULT
+	goto RemoteSocial_EventScript_Done
+	end
+
+RemoteSocial_EventScript_NoPokemon::
+	msgbox RemoteSocial_Text_NoPokemon, MSGBOX_DEFAULT
 	goto RemoteSocial_EventScript_Done
 	end
 
@@ -220,6 +226,11 @@ RemoteSocial_Text_WhatToDo:
 RemoteSocial_Text_Busy:
 	.string "You are still busy with\n"
 	.string "something else.$"
+
+RemoteSocial_Text_NoPokemon:
+	.string "You need a POKéMON of your own\n"
+	.string "before you can do anything with\l"
+	.string "other players.$"
 
 RemoteSocial_Text_NotReady:
 	.string "{STR_VAR_1} has not shown up\n"

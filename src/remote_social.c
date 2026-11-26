@@ -457,6 +457,10 @@ void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
     if (slot >= REMOTE_MAX_PLAYERS)
         return;
 
+    // Until this player has a Pokemon, nothing from other players is taken.
+    if (gPlayerPartyCount == 0 && (sub == SUB_MAIL || sub == SUB_REQUEST))
+        return;
+
     switch (sub)
     {
     case SUB_MAIL:
@@ -675,7 +679,9 @@ void RemoteSocial_Prepare(void)
     name = RemoteBattle_GetNameOfSlot(slot);
     StringCopy(gStringVar1, name != NULL ? name : gText_Friend);
     // 1: free, 2: busy, 3: the other player's team has not arrived yet
-    if (sState != ST_IDLE)
+    if (gPlayerPartyCount == 0)
+        gSpecialVar_Result = 4;     // no Pokemon yet: nothing to do with other players
+    else if (sState != ST_IDLE)
         gSpecialVar_Result = 2;
     else if (name == NULL)
         gSpecialVar_Result = 3;

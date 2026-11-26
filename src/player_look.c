@@ -7,6 +7,7 @@
 #include "sprite.h"
 #include "player_look.h"
 #include "constants/vars.h"
+#include "constants/event_objects.h"
 
 #define LOOK_VAR VAR_UNUSED_0x404E
 
@@ -45,6 +46,9 @@ extern const u16 gObjectEventPal_BrendanReflection[];
 extern const u16 gObjectEventPal_MayReflection[];
 
 #define LOOK_PAL_TAG_BASE 0xB100
+#define PARENT_PAL_TAG_BASE 0xB300      // Mom and Norman wearing the player's skin tone
+#define OBJ_EVENT_PAL_TAG_NPC_4_LOCAL 0x1106
+extern const u16 gObjectEventPal_Npc4[];
 
 // Look palettes are allocated per look and the sprite palette slots are few,
 // so drop the ones nothing is asking for any more; they are rebuilt on demand.
@@ -52,6 +56,8 @@ static void FreeLookPalettes(void)
 {
     u8 kind, packed;
 
+    for (packed = 1; packed < PLAYER_LOOK_SKINS; packed++)
+        FreeSpritePaletteByTag(PARENT_PAL_TAG_BASE + packed);
     for (kind = 0; kind < 3; kind++)
     {
         for (packed = 1; packed < 32; packed++)
@@ -115,6 +121,12 @@ void PlayerLook_ApplyBuffer(u16 *pal, u8 female, u8 packed)
         pal[12] = sOutfitRamps[outfit][0];
         pal[13] = sOutfitRamps[outfit][1];
     }
+}
+
+// Skin tone only (Norman's battle picture).
+void PlayerLook_ApplySkinToLoaded(u16 bufferOffset)
+{
+    PlayerLook_ApplyToLoaded(bufferOffset, FALSE, PlayerLook_Pack() & 3);
 }
 
 void PlayerLook_ApplyToLoaded(u16 bufferOffset, u8 female, u8 packed)
@@ -198,6 +210,59 @@ void PlayerLook_ApplyToObject(struct ObjectEvent *object, u8 packed)
     }
     if (sprite->oam.paletteNum != idx)
         sprite->oam.paletteNum = idx;
+}
+
+// The player's parents have the player's skin tone: Mom and Norman in the
+// overworld (the shared NPC palette is copied with the skin colours changed).
+void PlayerLook_UpdateParents(void)
+{
+    u8 skin = PlayerLook_Pack() & 3;
+    u8 i;
+
+    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
+    {
+        struct ObjectEvent *object = &gObjectEvents[i];
+        struct Sprite *sprite;
+        u8 idx;
+
+        if (!object->active || object->isPlayer || object->spriteId >= MAX_SPRITES
+         || (object->graphicsId != OBJ_EVENT_GFX_MOM && object->graphicsId != OBJ_EVENT_GFX_NORMAN))
+            continue;
+        sprite = &gSprites[object->spriteId];
+
+        if (skin == 0)
+        {
+            idx = IndexOfSpritePaletteTag(OBJ_EVENT_PAL_TAG_NPC_4_LOCAL);
+            if (idx != 0xFF && sprite->oam.paletteNum != idx)
+                sprite->oam.paletteNum = idx;
+            continue;
+        }
+
+        idx = IndexOfSpritePaletteTag(PARENT_PAL_TAG_BASE + skin);
+        if (idx == 0xFF)
+        {
+            u16 buf[16];
+            struct SpritePalette sp;
+            u8 j;
+
+            for (j = 0; j < 16; j++)
+                buf[j] = gObjectEventPal_Npc4[j];
+            PlayerLook_ApplyBuffer(buf, FALSE, skin);
+            sp.data = buf;
+            sp.tag = PARENT_PAL_TAG_BASE + skin;
+            idx = LoadSpritePalette(&sp);
+            if (idx == 0xFF)
+            {
+                FreeLookPalettes();
+                idx = LoadSpritePalette(&sp);
+            }
+            if (idx == 0xFF)
+                continue;
+            UpdateSpritePaletteWithWeather(idx);
+        }
+        if (sprite->oam.paletteNum != idx)
+            sprite->oam.paletteNum = idx;
+    }
 }
 
 void PlayerLook_UpdateLocal(void)
