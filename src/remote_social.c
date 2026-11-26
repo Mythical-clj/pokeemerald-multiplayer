@@ -170,6 +170,10 @@ static bool8 Send(u8 sub, u8 a, u8 b, const u8 *data)
     bytes[5] = gSaveBlock1Ptr->location.mapNum;
     for (i = 0; i < 6; i++)
         bytes[6 + i] = data != NULL ? data[i] : 0;
+    // The acknowledgements must not wait behind the data pieces: when the
+    // queue is half full of pieces they would never get through.
+    if (sub == SUB_OK || sub == SUB_CANCEL)
+        return RemotePlayer_TryPushTxPriority(&event);
     return RemotePlayer_TryPushTx(&event);
 }
 
@@ -649,7 +653,7 @@ void RemoteSocial_Tick(void)
         }
         else if (sKind == SOCIAL_REQUEST_MIX)
         {
-            if (sMixSending && sFrame % MIX_PERIOD == 0)
+            if (sMixSending && !sTheirOk && sFrame % MIX_PERIOD == 0)
             {
                 u8 data[6];
                 u8 i;
