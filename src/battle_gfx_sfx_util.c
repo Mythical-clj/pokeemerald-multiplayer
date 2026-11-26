@@ -1,5 +1,6 @@
 #include "global.h"
 #include "player_look.h"
+#include "constants/trainers.h"
 #include "remote_battle.h"
 #include "battle.h"
 #include "battle_controllers.h"
