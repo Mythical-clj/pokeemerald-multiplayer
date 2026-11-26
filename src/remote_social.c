@@ -37,7 +37,7 @@
 #define SUB_OK          6   // b = session: "I accept the trade" / "I have your records"
 #define SUB_MAILACK     9   // a = mail number, b = 0 delivered / 1 mailbox full, data[0-1] = recipient tag
 #define SUB_DROP        10  // the sender landed from Fly
-#define SUB_MIXCHUNK    7   // a = index, b = session, data = 6 bytes of the record (index = chunk count: checksum)
+#define SUB_MIXCHUNK    7   // a = index, b = session, data = 8 bytes (the map bytes too) of the record (index = chunk count: checksum)
 
 #define CHAT_WORDS          9
 #define MAIL_PARTS          4
@@ -177,6 +177,22 @@ static bool8 Send(u8 sub, u8 a, u8 b, const u8 *data)
     return RemotePlayer_TryPushTx(&event);
 }
 
+// Mix pieces use the two map bytes as data too: 8 bytes per message.
+static bool8 SendWide(u8 sub, u8 a, u8 b, const u8 *data)
+{
+    struct RemoteEvent event;
+    u8 *bytes = (u8 *)&event;
+    u8 i;
+
+    bytes[0] = REMOTE_EVENT_SOCIAL;
+    bytes[1] = sub;
+    bytes[2] = a;
+    bytes[3] = b;
+    for (i = 0; i < 8; i++)
+        bytes[4 + i] = data[i];
+    return RemotePlayer_TryPushTx(&event);
+}
+
 static void SendRequestMessage(void)
 {
     u8 data[6];
@@ -255,7 +271,7 @@ static u16 Checksum(const u8 *bytes, u16 length)
 
 static u8 MixChunks(void)
 {
-    return (RemoteMix_GetSize() + 5) / 6;
+    return (RemoteMix_GetSize() + 7) / 8;
 }
 
 static void ClearMix(void)
@@ -424,9 +440,9 @@ static bool8 MixPieceIsEmpty(const u8 *bytes, u16 size, u8 index)
 {
     u8 i;
 
-    for (i = 0; i < 6; i++)
+    for (i = 0; i < 8; i++)
     {
-        u16 at = index * 6 + i;
+        u16 at = index * 8 + i;
 
         if (at < size && bytes[at] != 0)
             return FALSE;
@@ -463,9 +479,9 @@ static void StoreMixChunk(u8 index, const u8 *data)
     }
     else
     {
-        for (i = 0; i < 6; i++)
+        for (i = 0; i < 8; i++)
         {
-            u16 at = index * 6 + i;
+            u16 at = index * 8 + i;
 
             if (at < size)
                 dest[at] = data[i];
@@ -549,7 +565,7 @@ void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
         break;
     case SUB_MIXCHUNK:
         if (sState == ST_AGREED && b == sSession && slot == sPeer && sKind == SOCIAL_REQUEST_MIX)
-            StoreMixChunk(a, data);
+            StoreMixChunk(a, m + 4);
         break;
     case SUB_CANCEL:
         if (b == sSession && slot == sPeer && sState != ST_IDLE)
@@ -655,7 +671,7 @@ void RemoteSocial_Tick(void)
         {
             if (sMixSending && !sTheirOk && sFrame % MIX_PERIOD == 0)
             {
-                u8 data[6];
+                u8 data[8];
                 u8 i;
                 u8 chunks = MixChunks();
                 u16 size = RemoteMix_GetSize();
@@ -670,17 +686,19 @@ void RemoteSocial_Tick(void)
                     data[3] = sMixPieces >> 8;
                     data[4] = 0;
                     data[5] = 0;
+                    data[6] = 0;
+                    data[7] = 0;
                 }
                 else
                 {
-                    for (i = 0; i < 6; i++)
+                    for (i = 0; i < 8; i++)
                     {
-                        u16 at = sMixCursor * 6 + i;
+                        u16 at = sMixCursor * 8 + i;
 
                         data[i] = at < size ? ((u8 *)sMixOut)[at] : 0;
                     }
                 }
-                if (Send(SUB_MIXCHUNK, sMixCursor, sSession, data))
+                if (SendWide(SUB_MIXCHUNK, sMixCursor, sSession, data))
                 {
                     // Next piece that is not empty, then the checksum, then again.
                     u8 next = sMixCursor + 1;
