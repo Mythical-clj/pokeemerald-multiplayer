@@ -2998,14 +2998,13 @@ static void ChooseTypeOfMoveUsedString(u8 *dst)
 
 void BattlePutTextOnWindow(const u8 *text, u8 windowId)
 {
-    if (gRemoteVersus && (windowId & ~B_WIN_COPYTOVRAM) == B_WIN_MSG)
-        RemoteSpectate_NoteText(text);
-
     const struct BattleWindowText *textInfo = sBattleTextOnWindowsInfo[gBattleScripting.windowsType];
     bool32 copyToVram;
     struct TextPrinterTemplate printerTemplate;
     u8 speed;
 
+    if (gRemoteVersus && (windowId & ~B_WIN_COPYTOVRAM) == B_WIN_MSG)
+        RemoteSpectate_NoteText(text);
     if (windowId & B_WIN_COPYTOVRAM)
     {
         windowId &= ~B_WIN_COPYTOVRAM;
