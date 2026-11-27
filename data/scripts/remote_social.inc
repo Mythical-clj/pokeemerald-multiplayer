@@ -6,6 +6,7 @@ RemoteSocial_EventScript_Interact::
 	goto_if_eq VAR_RESULT, 2, RemoteSocial_EventScript_Busy
 	goto_if_eq VAR_RESULT, 3, RemoteSocial_EventScript_NotReady
 	goto_if_eq VAR_RESULT, 4, RemoteSocial_EventScript_NoPokemon
+	goto_if_eq VAR_RESULT, 5, RemoteSocial_EventScript_Spectate
 	message RemoteSocial_Text_WhatToDo
 	waitmessage
 	multichoice 0, 0, MULTI_REMOTE_SOCIAL, FALSE
@@ -19,6 +20,15 @@ RemoteSocial_EventScript_Interact::
 
 RemoteSocial_EventScript_Done::
 	closemessage
+	releaseall
+	end
+
+RemoteSocial_EventScript_Spectate::
+	msgbox RemoteSocial_Text_Spectate, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, 0, RemoteSocial_EventScript_Done
+	closemessage
+	special RemoteSpectate_Start
+	waitstate
 	releaseall
 	end
 
@@ -294,3 +304,7 @@ RemoteSocial_Text_MixFailed:
 RemoteSocial_Text_WantsToTrade:
 	.string "{STR_VAR_1} wants to trade\n"
 	.string "POKéMON! Accept?$"
+
+RemoteSocial_Text_Spectate:
+	.string "{STR_VAR_1} is in a battle.\n"
+	.string "Would you like to spectate?$"

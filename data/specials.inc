@@ -559,5 +559,6 @@ gSpecials::
 	def_special RemoteSocial_WaitMix, waitstate=1
 	def_special RemoteSocial_FinishMix
 	def_special RemoteSocial_TradeEvolve
+	def_special RemoteSpectate_Start
 	def_special PlayerLook_SetSkinFromVar
 	def_special PlayerLook_SetOutfitFromVar

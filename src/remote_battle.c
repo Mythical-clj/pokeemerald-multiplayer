@@ -15,6 +15,7 @@
 #include "remote_player.h"
 #include "remote_sio.h"
 #include "remote_social.h"
+#include "remote_spectate.h"
 #include "battle_transition.h"
 #include "constants/opponents.h"
 #include "overworld.h"
@@ -1146,6 +1147,8 @@ void RemoteBattle_BattleTick(void)
     }
     RemoteSio_Tick();
     RemotePlayer_DrainBattleRx();
+    if (gRemoteVersus)
+        RemoteSpectate_BroadcastTick();
     if (sBattleFrame % SYNC_PERIOD_FRAMES == 0)
         SendSync();
     if (sOutAcked != sOutNext && sBattleFrame % CHOICE_RESEND_FRAMES == 0)
@@ -1646,6 +1649,7 @@ bool8 RemoteBattle_BeginVersus(const struct VersusRequest *request)
         gPlayerParty[i] = sSendMons[i];
     CalculatePlayerPartyCount();
 
+    RemoteSpectate_ResetSender();
     sRole = request->requester ? ROLE_HOST : ROLE_GUEST;
     sSession = request->session;
     sSeed = request->seed;

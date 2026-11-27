@@ -17,6 +17,7 @@
 #include "remote_battle.h"
 #include "remote_player.h"
 #include "remote_social.h"
+#include "remote_spectate.h"
 #include "script.h"
 #include "strings.h"
 #include "string_util.h"
@@ -508,6 +509,11 @@ void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event)
 
     if (slot >= REMOTE_MAX_PLAYERS)
         return;
+    if (sub >= SUB_SPEC_MON)
+    {
+        RemoteSpectate_HandleRx(slot, event);
+        return;
+    }
 
     // Until this player has a Pokemon, nothing from other players is taken.
     if (gPlayerPartyCount == 0 && (sub == SUB_MAIL || sub == SUB_REQUEST))
@@ -755,6 +761,8 @@ void RemoteSocial_Prepare(void)
         gSpecialVar_Result = 2;
     else if (name == NULL)
         gSpecialVar_Result = 3;
+    else if (RemoteSpectate_IsFighting(slot))
+        gSpecialVar_Result = 5;     // in a fight: can be watched
     else
         gSpecialVar_Result = 1;
 }
