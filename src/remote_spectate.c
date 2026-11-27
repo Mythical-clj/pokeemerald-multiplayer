@@ -49,6 +49,18 @@
 // Wire
 // ---------------------------------------------------------------------------
 
+static bool8 SameBytes(const u8 *a, const u8 *b, u8 len)
+{
+    u8 i;
+
+    for (i = 0; i < len; i++)
+    {
+        if (a[i] != b[i])
+            return FALSE;
+    }
+    return TRUE;
+}
+
 static bool8 SpecSend(u8 sub, u8 a, u8 b, const u8 *data8)
 {
     struct RemoteEvent event;
@@ -163,7 +175,7 @@ void RemoteSpectate_NoteText(const u8 *text)
     {
         u8 last = sRecentCount - 1;
 
-        if (sRecentLen[last] == len && memcmp(sRecent[last], tmp, len) == 0)
+        if (sRecentLen[last] == len && SameBytes(sRecent[last], tmp, len))
             return;
     }
     if (sRecentCount == RECENT_LINES)
@@ -244,7 +256,7 @@ void RemoteSpectate_BroadcastTick(void)
         u8 mon[8];
 
         BuildMon(i, mon);
-        if (!sLastMonValid[i] || memcmp(mon, sLastMon[i], 8) != 0)
+        if (!sLastMonValid[i] || !SameBytes(mon, sLastMon[i], 8))
         {
             if (SpecSend(SUB_SPEC_MON, i, 0, mon))
             {
