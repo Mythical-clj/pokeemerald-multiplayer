@@ -117,7 +117,9 @@ static EWRAM_DATA bool8 sCancelled = FALSE;
 
 static EWRAM_DATA u32 sMixOut[REMOTE_MIX_MAX_BYTES / 4] = {0};
 static EWRAM_DATA u32 sMixIn[REMOTE_MIX_MAX_BYTES / 4] = {0};
-static EWRAM_DATA u8 sMixGot[256] = {0};
+static EWRAM_DATA u8 sMixGot[32] = {0};     // one bit per chunk
+#define MIX_HAVE(i) (sMixGot[(i) >> 3] & (1 << ((i) & 7)))
+#define MIX_MARK(i) (sMixGot[(i) >> 3] |= 1 << ((i) & 7))
 static EWRAM_DATA u16 sMixGotCount = 0;
 static EWRAM_DATA u16 sMixTheirSum = 0;
 static EWRAM_DATA u16 sMixNeed = 0;
@@ -286,8 +288,8 @@ static void ClearMix(void)
     sMixNeed = 0;
     sMixHaveSum = FALSE;
     memset(sMixIn, 0, sizeof(sMixIn));
-    for (i = 0; i < 256; i++)
-        sMixGot[i] = FALSE;
+    for (i = 0; i < sizeof(sMixGot); i++)
+        sMixGot[i] = 0;
 }
 
 static void ClearTrade(void)
@@ -458,8 +460,8 @@ static void ResetMixReceive(void)
     sMixGotCount = 0;
     sMixNeed = 0;
     sMixHaveSum = FALSE;
-    for (i = 0; i < ARRAY_COUNT(sMixGot); i++)
-        sMixGot[i] = FALSE;
+    for (i = 0; i < sizeof(sMixGot); i++)
+        sMixGot[i] = 0;
     memset(sMixIn, 0, sizeof(sMixIn));
 }
 
@@ -470,7 +472,7 @@ static void StoreMixChunk(u8 index, const u8 *data)
     u8 chunks = MixChunks();
     u8 i;
 
-    if (index > chunks || sMixGot[index] || sHaveMix)
+    if (index > chunks || MIX_HAVE(index) || sHaveMix)
         return;
     if (index == chunks)
     {
@@ -489,7 +491,7 @@ static void StoreMixChunk(u8 index, const u8 *data)
         }
         sMixGotCount++;
     }
-    sMixGot[index] = TRUE;
+    MIX_MARK(index);
     if (sMixHaveSum && sMixGotCount >= sMixNeed)
     {
         if (Checksum(dest, size) == sMixTheirSum)

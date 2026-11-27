@@ -24,7 +24,9 @@
 #define DRIFT_TOLERANCE         3
 // A STEP landing up to this far from the last known tile is made up by
 // walking one tile at a time; further than that it becomes a reposition.
-#define MEND_MAX                3
+#define MEND_MAX                6
+// A SYNC off by up to this many tiles is walked to, not jumped to.
+#define SYNC_WALK_MAX           6
 // Queued events at which the remote speeds up to catch up.
 #define HURRY_THRESHOLD         4
 #define SPAWN_RETRY_FRAMES      60
@@ -33,8 +35,9 @@
 #define VIEW_HALF_WIDTH         7
 #define VIEW_HALF_HEIGHT        5
 
-#define SLOT_QUEUE_LEN          6
+#define SLOT_QUEUE_LEN          10      // lag is better than dropped steps (a drop becomes a jump)
 #define RING_LEN                8
+#define RX_RING_LEN             16      // up to 5 players talk at once
 #define LOOPBACK_DELAY_FRAMES   90
 #define LOOPBACK_RING_LEN       16
 
@@ -70,7 +73,7 @@ struct LoopbackEntry
 static EWRAM_DATA struct RemoteSlot sSlots[REMOTE_MAX_PLAYERS] = {0};
 // Ring indices are volatile: the serial interrupt writes the receive ring and
 // reads the transmit ring while the main loop does the opposite.
-static EWRAM_DATA struct RemoteEvent sRxRing[RING_LEN] = {0};
+static EWRAM_DATA struct RemoteEvent sRxRing[RX_RING_LEN] = {0};
 static EWRAM_DATA struct RemoteEvent sTxRing[RING_LEN] = {0};
 static EWRAM_DATA vu8 sRxHead = 0;
 static EWRAM_DATA vu8 sRxTail = 0;
@@ -192,7 +195,7 @@ bool8 RemotePlayer_PopTx(struct RemoteEvent *event)
 // Called from the serial interrupt.
 bool8 RemotePlayer_PushRx(const struct RemoteEvent *event)
 {
-    u8 next = (sRxHead + 1) % RING_LEN;
+    u8 next = (sRxHead + 1) % RX_RING_LEN;
 
     if (next == sRxTail)
         return FALSE;
@@ -261,7 +264,7 @@ void RemotePlayer_DrainBattleRx(void)
 
         if (kind >= REMOTE_EVENT_BPARTY)
             RemoteBattle_HandleRx(&sRxRing[sRxTail]);
-        sRxTail = (sRxTail + 1) % RING_LEN;
+        sRxTail = (sRxTail + 1) % RX_RING_LEN;
     }
 }
 
@@ -710,6 +713,28 @@ static void StartMovement(struct ObjectEvent *object, u8 dir, u8 act, bool8 isSt
     ObjectEventSetHeldMovement(object, act);
 }
 
+// Starts one fast step towards (x, y), along the longer axis. FALSE when
+// there is nothing to walk or no action exists for the avatar state.
+static bool8 WalkToward(struct RemoteSlot *slot, struct ObjectEvent *object, s16 x, s16 y)
+{
+    s16 gx = x - object->currentCoords.x;
+    s16 gy = y - object->currentCoords.y;
+    u8 dir;
+    u8 act;
+
+    if (gx == 0 && gy == 0)
+        return FALSE;
+    if (Abs16(gx) >= Abs16(gy))
+        dir = gx > 0 ? DIR_EAST : DIR_WEST;
+    else
+        dir = gy > 0 ? DIR_SOUTH : DIR_NORTH;
+    act = ActionFor(slot->avatarState, dir, MOVEMENT_ACTION_WALK_FASTER_DOWN, TRUE, TRUE);
+    if (act == 0xFF)
+        return FALSE;
+    StartMovement(object, dir, act, TRUE);
+    return TRUE;
+}
+
 // Handles queued events for one slot. Returns when the remote is still busy
 // with a previous movement; that event stays queued.
 static void ConsumeSlotEvents(u8 slotId)
@@ -849,7 +874,18 @@ static void ConsumeSlotEvents(u8 slotId)
                 s16 drift = Abs16(x - curX) + Abs16(y - curY);
 
                 // Standing still there is nothing to forgive: a remote that is
-                // off its tile cannot be talked to.
+                // off its tile cannot be talked to. A small gap is walked,
+                // one quick step per pass, rather than jumped: a little lag
+                // looks far better than a sprite that teleports.
+                if (!slot->forceResync && drift > 0 && drift <= SYNC_WALK_MAX
+                 && (drift <= 2 || x == curX || y == curY)
+                 && (!ObjectEventIsHeldMovementActive(object) || drift > DRIFT_TOLERANCE))
+                {
+                    if (!ReadyForMovement(object))
+                        return;
+                    if (WalkToward(slot, object, x, y))
+                        return;     // same event again once the step is done
+                }
                 if (slot->forceResync || drift > (ObjectEventIsHeldMovementActive(object) ? DRIFT_TOLERANCE : 0))
                 {
                     Reposition(slotId, x, y, event->dir);
@@ -918,7 +954,7 @@ static void DrainRx(void)
             RemoteBattle_HandleRx(&sRxRing[sRxTail]);
         else
             QueueEvent(&sRxRing[sRxTail]);
-        sRxTail = (sRxTail + 1) % RING_LEN;
+        sRxTail = (sRxTail + 1) % RX_RING_LEN;
     }
 }
 

@@ -10,8 +10,10 @@
 // The wire format is the sync project's 12-byte event, so its relay and
 // client can be reused unchanged.
 
-// Remote players that can be shown at once (a room holds at most 4 players).
-#define REMOTE_MAX_PLAYERS  3
+// Remote players that can be shown at once (a gblink room holds at most 6
+// players; a direct cable only ever has 3 others). The slot is three bits of
+// the event type, so up to 8 would fit.
+#define REMOTE_MAX_PLAYERS  5
 
 // Object events spawned for remote players use localIds REMOTE_LOCAL_ID + slot.
 #define REMOTE_LOCAL_ID     0xE0
@@ -24,7 +26,7 @@
 #define REMOTE_EVENT_TURN   3
 #define REMOTE_EVENT_LEAVE  4
 #define REMOTE_EVENT_KIND(t) ((t) & 0x0F)
-#define REMOTE_EVENT_SLOT(t) (((t) >> 4) & 0x03)
+#define REMOTE_EVENT_SLOT(t) (((t) >> 4) & 0x07)
 
 // 1 = a ghost of the local player replays its own steps about 1.5 s late,
 // so the module can be tested with no link hardware. Set to 0 when a

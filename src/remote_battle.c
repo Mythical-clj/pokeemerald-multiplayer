@@ -149,19 +149,24 @@ STATIC_ASSERT(sizeof(struct ChoiceMessage) == 12, ChoiceMessageIs12Bytes);
 STATIC_ASSERT(sizeof(struct PartyChunk) == 12, PartyChunkIs12Bytes);
 STATIC_ASSERT(sizeof(struct ExpMessage) == 12, ExpMessageIs12Bytes);
 
+// The first three fields are exactly the wire payload, back to back, so the
+// chunks are written straight into them (no separate assembly copy).
 struct PeerTeam
 {
-    u8 assembly[CHUNK_COUNT * CHUNK_BYTES];
-    u8 got[CHUNK_COUNT];
+    struct Pokemon mons[SEND_SIZE];
+    u8 name[NAME_BYTES];
+    u16 phrases[PHRASE_COUNT][PHRASE_WORDS];
+    u8 got[(CHUNK_COUNT + 7) / 8];
     u8 gotCount;
     u8 asmTag;
     bool8 ready;
     u8 readyTag;
     u8 gender;
-    u8 name[NAME_BYTES];
-    u16 phrases[PHRASE_COUNT][PHRASE_WORDS];
-    struct Pokemon mons[SEND_SIZE];
 };
+
+STATIC_ASSERT(offsetof(struct PeerTeam, name) == TEAM_BYTES, PeerNameFollowsMons);
+STATIC_ASSERT(offsetof(struct PeerTeam, phrases) == TEAM_BYTES + NAME_BYTES, PeerPhrasesFollowName);
+STATIC_ASSERT(offsetof(struct PeerTeam, got) >= PAYLOAD_BYTES, PeerPayloadFits);
 
 struct PendingAward
 {
@@ -462,23 +467,8 @@ static void QueueAward(struct Pokemon *mon, u32 before)
 static void CompleteTeam(struct PeerTeam *peer)
 {
     u8 i;
-    u16 j;
-    u8 *dest = (u8 *)peer->mons;
 
-    for (j = 0; j < TEAM_BYTES; j++)
-        dest[j] = peer->assembly[j];
-    for (i = 0; i < NAME_BYTES; i++)
-        peer->name[i] = peer->assembly[TEAM_BYTES + i];
     peer->name[NAME_BYTES - 1] = EOS;
-    for (i = 0; i < PHRASE_COUNT; i++)
-    {
-        for (j = 0; j < PHRASE_WORDS; j++)
-        {
-            u16 o = TEAM_BYTES + NAME_BYTES + (i * PHRASE_WORDS + j) * 2;
-
-            peer->phrases[i][j] = peer->assembly[o] | (peer->assembly[o + 1] << 8);
-        }
-    }
 
     // Anything that does not look like a Pokémon is dropped.
     for (i = 0; i < SEND_SIZE; i++)
@@ -497,23 +487,35 @@ static void CompleteTeam(struct PeerTeam *peer)
 static void HandlePartyChunk(u8 slot, const struct PartyChunk *chunk)
 {
     struct PeerTeam *peer = &sPeers[slot];
+    u8 *dest = (u8 *)peer;
     u8 i;
 
     if (chunk->idx >= CHUNK_COUNT || chunk->tag == 0)
+        return;
+    // Never touch a team that is in use, or one that is already complete.
+    if (gMain.inBattle || gRemoteBattleActive)
+        return;
+    if (peer->ready && chunk->tag == peer->readyTag)
         return;
     if (chunk->tag != peer->asmTag)
     {
         // The sender's team changed: start over.
         peer->asmTag = chunk->tag;
         peer->gotCount = 0;
-        for (i = 0; i < CHUNK_COUNT; i++)
-            peer->got[i] = FALSE;
+        peer->ready = FALSE;
+        for (i = 0; i < sizeof(peer->got); i++)
+            peer->got[i] = 0;
     }
-    if (peer->got[chunk->idx])
+    if (peer->got[chunk->idx >> 3] & (1 << (chunk->idx & 7)))
         return;
     for (i = 0; i < CHUNK_BYTES; i++)
-        peer->assembly[chunk->idx * CHUNK_BYTES + i] = chunk->data[i];
-    peer->got[chunk->idx] = TRUE;
+    {
+        u16 o = chunk->idx * CHUNK_BYTES + i;
+
+        if (o < PAYLOAD_BYTES)
+            dest[o] = chunk->data[i];
+    }
+    peer->got[chunk->idx >> 3] |= 1 << (chunk->idx & 7);
     peer->gotCount++;
     if (peer->gotCount == CHUNK_COUNT)
         CompleteTeam(peer);

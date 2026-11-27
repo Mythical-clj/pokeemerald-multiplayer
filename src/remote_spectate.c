@@ -419,6 +419,8 @@ void RemoteSpectate_BroadcastTick(void)
     }
 }
 
+#define MAX_SPECTATORS 2
+
 static void HandleJoin(u8 slot, const u8 *data)
 {
     u32 now = gMain.vblankCounter1;
@@ -429,6 +431,19 @@ static void HandleJoin(u8 slot, const u8 *data)
         return;
     if (tag != NameTagOf(gSaveBlock2Ptr->playerName))
         return;
+    // At most two spectators at a time (more players can be in the room now).
+    if (sWatchedUntil[slot] == 0 || now >= sWatchedUntil[slot])
+    {
+        u8 active = 0;
+
+        for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
+        {
+            if (i != slot && sWatchedUntil[i] != 0 && now < sWatchedUntil[i])
+                active++;
+        }
+        if (active >= MAX_SPECTATORS)
+            return;
+    }
     // A watcher that was away for a moment gets everything again.
     if (sWatchedUntil[slot] == 0 || now >= sWatchedUntil[slot])
     {
