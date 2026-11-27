@@ -17,6 +17,8 @@
 #include "palette.h"
 #include "pokeball.h"
 #include "pokemon.h"
+#include "player_look.h"
+#include "remote_spectate.h"
 #include "recorded_battle.h"
 #include "reshow_battle_screen.h"
 #include "sound.h"
@@ -1236,6 +1238,13 @@ static void RecordedOpponentHandleDrawTrainerPic(void)
     }
 
     DecompressTrainerFrontPic(trainerPicId, gActiveBattler);
+    if (RemoteSpectate_IsWatching())
+    {
+        u8 palIdx = IndexOfSpritePaletteTag(gTrainerFrontPicPaletteTable[trainerPicId].tag);
+
+        if (palIdx != 0xFF)
+            PlayerLook_ApplyToLoaded(OBJ_PLTT_ID(palIdx), trainerPicId == TRAINER_PIC_MAY, RemoteSpectate_OppLook());
+    }
     SetMultiuseSpriteTemplateToTrainerBack(trainerPicId, GetBattlerPosition(gActiveBattler));
     gBattlerSpriteIds[gActiveBattler] = CreateSprite(&gMultiuseSpriteTemplate,
                                                xPos,

@@ -94,6 +94,8 @@ void RemoteBattle_GiveUpOnRemote(void);
 const u8 *RemoteBattle_GetPartnerName(void);
 void RemoteBattle_SetSpectateMirror(bool8 mirrored);
 u32 RemoteBattle_GetSeed(void);
+void RemoteBattle_SetSpectatePartner(const u8 *name, u8 gender, u8 look);
+u8 RemoteBattle_GetPartnerGender(void);
 bool8 RemoteBattle_IsMirroredVersus(void);
 const u8 *RemoteBattle_GetNameOfSlot(u8 slot);
 u8 RemoteBattle_GetPartnerBackPic(void);

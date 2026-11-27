@@ -9,9 +9,11 @@
 #include "menu.h"
 #include "overworld.h"
 #include "battle_main.h"
+#include "link.h"
 #include "load_save.h"
 #include "pokemon.h"
 #include "recorded_battle.h"
+#include "player_look.h"
 #include "battle_setup.h"
 #include "palette.h"
 #include "script.h"
@@ -258,17 +260,12 @@ void RemoteSpectate_BroadcastTick(void)
     bool8 watched = sWatchedUntil != 0 && now < sWatchedUntil;
     u8 i;
 
-    if (now - sLastSample >= 15)
+    // Only what can no longer be taken back is sent: while the players are
+    // still choosing, the newest bytes may still be cancelled.
+    if (!BattleIsSelectingActions())
     {
-        u8 j;
-
-        sLastSample = now;
         for (i = 0; i < 4; i++)
-        {
-            for (j = 0; j < 5; j++)
-                sRecSample[i][j] = sRecSample[i][j + 1];
-            sRecSample[i][5] = RecordedBattle_RecordSize(i);
-        }
+            sRecSample[i][0] = RecordedBattle_RecordSize(i);
     }
     if (now - sLastInfoSent >= (watched ? INFO_PERIOD_WATCHED : INFO_PERIOD_FRAMES))
     {
@@ -320,7 +317,11 @@ void RemoteSpectate_BroadcastTick(void)
             chunk[1] = (seed >> 8) & 0xFF;
             chunk[2] = (seed >> 16) & 0xFF;
             chunk[3] = seed >> 24;
-            chunk[4] = RemoteBattle_IsMirroredVersus() ? 1 : 0;
+            chunk[4] = (RemoteBattle_IsMirroredVersus() ? 1 : 0)
+                     | (gSaveBlock2Ptr->playerGender == FEMALE ? 2 : 0)
+                     | (RemoteBattle_GetPartnerGender() == FEMALE ? 4 : 0);
+            chunk[5] = PlayerLook_Pack();
+            chunk[6] = RemoteBattle_GetVersusLook();
         }
         else
         {
@@ -757,6 +758,19 @@ static void Redraw(void)
 }
 
 static EWRAM_DATA bool8 sAckDue = FALSE;
+static EWRAM_DATA u8 sSavedName[PLAYER_NAME_LENGTH + 1] = {0};
+static EWRAM_DATA u8 sSavedGender = 0;
+static EWRAM_DATA u8 sOppLook = 0;
+
+bool8 RemoteSpectate_IsWatching(void)
+{
+    return sInBattleWatch;
+}
+
+u8 RemoteSpectate_OppLook(void)
+{
+    return sOppLook;
+}
 
 static void SendJoin(void)
 {
@@ -798,12 +812,18 @@ static void SendHeartbeats(u32 now)
 
 static void CB2_SpectateDone(void)
 {
+    u8 i;
+
     sInBattleWatch = FALSE;
     sLaunched = FALSE;
     sWatching = FALSE;
     sFastTurn = 0;
     RecordedBattle_LiveEnd();
     RemoteBattle_SetSpectateMirror(FALSE);
+    gRemoteVersus = FALSE;
+    for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
+        gSaveBlock2Ptr->playerName[i] = sSavedName[i];
+    gSaveBlock2Ptr->playerGender = sSavedGender;
     gHitMarker &= ~HITMARKER_NO_ANIMATIONS;
     LoadPlayerParty();
     CalculatePlayerPartyCount();
@@ -824,6 +844,20 @@ static void LaunchBattle(void)
     u16 j;
 
     RemoteBattle_SetSpectateMirror((buf[4] & 1) != 0);
+    // The battle is shown as the watched player's: their name and looks stand
+    // in for this player's until it is over.
+    for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
+        sSavedName[i] = gSaveBlock2Ptr->playerName[i];
+    sSavedGender = gSaveBlock2Ptr->playerGender;
+    for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
+        gSaveBlock2Ptr->playerName[i] = sTargetName[i];
+    gSaveBlock2Ptr->playerGender = (buf[4] & 2) ? FEMALE : MALE;
+    gLinkPlayers[0].gender = gSaveBlock2Ptr->playerGender;
+    gLinkPlayers[1].gender = (buf[4] & 4) ? FEMALE : MALE;
+    gRecordedBattleMultiplayerId = 0;
+    sOppLook = buf[6];
+    RemoteBattle_SetSpectatePartner(sOppName, gLinkPlayers[1].gender, buf[6]);
+    gRemoteVersus = TRUE;
     SavePlayerParty();
     ZeroPlayerPartyMons();
     ZeroEnemyPartyMons();

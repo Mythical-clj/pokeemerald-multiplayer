@@ -1876,6 +1876,12 @@ static void CB2_HandleStartMultiBattle(void)
     }
 }
 
+// While the players are still choosing, what was recorded can be taken back.
+bool8 BattleIsSelectingActions(void)
+{
+    return gBattleMainFunc == HandleTurnActionSelectionState;
+}
+
 void BattleMainCB2(void)
 {
     // A spectator can speed a turn up: the same frame is run several times.

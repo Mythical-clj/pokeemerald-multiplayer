@@ -31,5 +31,7 @@ void RemoteSpectate_Start(void);
 // how many extra frames to run (the R button skips ahead).
 u8 RemoteSpectate_FrameHook(void);
 bool8 RemoteSpectate_WantsQuit(void);
+bool8 RemoteSpectate_IsWatching(void);
+u8 RemoteSpectate_OppLook(void);
 
 #endif // GUARD_REMOTE_SPECTATE_H

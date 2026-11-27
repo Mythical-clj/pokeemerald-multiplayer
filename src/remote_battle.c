@@ -953,6 +953,22 @@ void RemoteBattle_SetSpectateMirror(bool8 mirrored)
     sSpectateMirror = mirrored;
 }
 
+void RemoteBattle_SetSpectatePartner(const u8 *name, u8 gender, u8 look)
+{
+    u8 i;
+
+    for (i = 0; i < NAME_BYTES && name[i] != EOS; i++)
+        sPartnerName[i] = name[i];
+    sPartnerName[i] = EOS;
+    sPartnerGender = gender;
+    sPartnerLook = look;
+}
+
+u8 RemoteBattle_GetPartnerGender(void)
+{
+    return sPartnerGender;
+}
+
 u32 RemoteBattle_GetSeed(void)
 {
     return sSeed;
@@ -1725,6 +1741,11 @@ u8 RemoteBattle_GetPartnerBackPic(void)
 // gStringVar4. Their words are shown as they chose them at their PC.
 void RemoteBattle_VersusPhraseToString(u8 which)
 {
+    if (!gRemoteHumanBattle)
+    {
+        gStringVar4[0] = EOS;
+        return;
+    }
     if (sPartnerSlot < REMOTE_MAX_PLAYERS && which < PHRASE_COUNT && sPeers[sPartnerSlot].ready)
         FrontierSpeechToString(sPeers[sPartnerSlot].phrases[which]);
     else

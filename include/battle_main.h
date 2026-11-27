@@ -42,6 +42,7 @@ struct MultiPartnerMenuPokemon
 #define BOUNCE_HEALTHBOX    0x1
 
 void CB2_InitBattle(void);
+bool8 BattleIsSelectingActions(void);
 void BattleMainCB2(void);
 void CB2_QuitRecordedBattle(void);
 void VBlankCB_Battle(void);
