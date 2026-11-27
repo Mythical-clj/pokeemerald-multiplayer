@@ -41,7 +41,7 @@
 
 #define CHAT_WORDS          9
 #define MAIL_PARTS          4
-#define MAIL_REPEATS        40      // sent again until acknowledged: about 7 s
+#define MAIL_REPEATS        600     // sent again until acknowledged: about 100 s (the other player may still be writing theirs)
 #define MAIL_REPEAT_FRAMES  10
 
 #define OFFER_CHUNKS    ((sizeof(struct Pokemon) + 5) / 6)
@@ -1106,6 +1106,10 @@ void RemoteSocial_SendChat(void)
     gSpecialVar_Result = any && name != NULL;
     if (!gSpecialVar_Result)
         return;
+    // After a restart the numbers begin again: start somewhere else each time
+    // so a mail is never taken for one that was already delivered.
+    if (sMailNumber == 0)
+        sMailNumber = (u8)(sFrame ^ (sFrame >> 8));
     sMailNumber++;
     if (sMailNumber == 0)
         sMailNumber = 1;
