@@ -940,7 +940,25 @@ bool8 RemoteBattle_IsGuest(void)
     return gRemoteHumanBattle && !gRemoteVersus && sRole == ROLE_GUEST;
 }
 
+static EWRAM_DATA bool8 sSpectateMirror = FALSE;
+
 static bool8 IsMirrored(void)
+{
+    return (gRemoteVersus && sRole == ROLE_GUEST) || sSpectateMirror;
+}
+
+// For spectators: the watched player's game was the mirror image.
+void RemoteBattle_SetSpectateMirror(bool8 mirrored)
+{
+    sSpectateMirror = mirrored;
+}
+
+u32 RemoteBattle_GetSeed(void)
+{
+    return sSeed;
+}
+
+bool8 RemoteBattle_IsMirroredVersus(void)
 {
     return gRemoteVersus && sRole == ROLE_GUEST;
 }

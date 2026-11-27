@@ -187,6 +187,64 @@ void RecordedBattle_SetTrainerInfo(void)
     }
 }
 
+// ---- Live watching (remote spectators) ------------------------------------
+EWRAM_DATA static u16 sLiveReceived[MAX_BATTLERS_COUNT] = {0};
+EWRAM_DATA static bool8 sLive = FALSE;
+
+void RecordedBattle_LiveBegin(void)
+{
+    s32 i, j;
+
+    for (i = 0; i < MAX_BATTLERS_COUNT; i++)
+    {
+        sLiveReceived[i] = 0;
+        for (j = 0; j < BATTLER_RECORD_SIZE; j++)
+            sBattleRecords[i][j] = 0xFF;
+    }
+    sBattleScene = 0;
+    sTextSpeed = 2;     // fast
+    sAI_Scripts = 0;
+    sLive = TRUE;
+}
+
+void RecordedBattle_LiveEnd(void)
+{
+    sLive = FALSE;
+}
+
+void RecordedBattle_LivePut(u8 battler, u16 pos, u8 byte)
+{
+    if (battler >= MAX_BATTLERS_COUNT || pos >= BATTLER_RECORD_SIZE)
+        return;
+    sBattleRecords[battler][pos] = byte;
+    if (pos + 1 > sLiveReceived[battler])
+        sLiveReceived[battler] = pos + 1;
+}
+
+// Does the stream hold what the controller is about to read?
+bool8 RecordedBattle_LiveHas(u8 battler, u8 need)
+{
+    if (!sLive)
+        return TRUE;
+    return sLiveReceived[battler] >= sBattlerRecordSizes[battler] + need;
+}
+
+// What this game has recorded of its own fight, for the spectators.
+u16 RecordedBattle_RecordSize(u8 battler)
+{
+    return sBattlerRecordSizes[battler];
+}
+
+u8 RecordedBattle_RecordByte(u8 battler, u16 pos)
+{
+    return sBattleRecords[battler][pos];
+}
+
+const u8 *RecordedBattle_GetSavedMon(bool8 enemy, u8 idx)
+{
+    return (const u8 *)(enemy ? &sSavedOpponentParty[idx] : &sSavedPlayerParty[idx]);
+}
+
 void RecordedBattle_SetBattlerAction(u8 battler, u8 action)
 {
     if (sBattlerRecordSizes[battler] < BATTLER_RECORD_SIZE && sRecordMode != B_RECORD_MODE_PLAYBACK)

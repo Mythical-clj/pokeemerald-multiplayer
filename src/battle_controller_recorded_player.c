@@ -1421,6 +1421,8 @@ static void ChooseActionInBattlePalace(void)
 
 static void RecordedPlayerHandleChooseAction(void)
 {
+    if (!RecordedBattle_LiveHas(gActiveBattler, 1))
+        return;
     if (gBattleTypeFlags & BATTLE_TYPE_PALACE)
     {
         gBattlerControllerFuncs[gActiveBattler] = ChooseActionInBattlePalace;
@@ -1439,6 +1441,8 @@ static void RecordedPlayerHandleYesNoBox(void)
 
 static void RecordedPlayerHandleChooseMove(void)
 {
+    if (!(gBattleTypeFlags & BATTLE_TYPE_PALACE) && !RecordedBattle_LiveHas(gActiveBattler, 2))
+        return;
     if (gBattleTypeFlags & BATTLE_TYPE_PALACE)
     {
         BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, B_ACTION_EXEC_SCRIPT, ChooseMoveAndTargetInBattlePalace());
@@ -1460,6 +1464,8 @@ static void RecordedPlayerHandleChooseItem(void)
 
 static void RecordedPlayerHandleChoosePokemon(void)
 {
+    if (!RecordedBattle_LiveHas(gActiveBattler, 1))
+        return;
     *(gBattleStruct->monToSwitchIntoId + gActiveBattler) = RecordedBattle_GetBattlerAction(gActiveBattler);
     BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, *(gBattleStruct->monToSwitchIntoId + gActiveBattler), NULL);
     RecordedPlayerBufferExecCompleted();

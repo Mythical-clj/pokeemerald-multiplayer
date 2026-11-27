@@ -8,6 +8,11 @@
 #include "main.h"
 #include "menu.h"
 #include "overworld.h"
+#include "battle_main.h"
+#include "load_save.h"
+#include "pokemon.h"
+#include "recorded_battle.h"
+#include "battle_transition.h"
 #include "palette.h"
 #include "script.h"
 #include "sound.h"
@@ -25,6 +30,7 @@
 #include "constants/characters.h"
 #include "constants/rgb.h"
 #include "constants/species.h"
+#include "constants/opponents.h"
 #include "constants/songs.h"
 
 // Spectating: nobody can join a running battle, so the fighters tell the
@@ -102,6 +108,15 @@ static EWRAM_DATA u8 sNextSeq = 0;
 static EWRAM_DATA u32 sWatchedUntil = 0;
 static EWRAM_DATA u32 sLastJoin = 0;
 static EWRAM_DATA u32 sLastInfoSent = 0;
+static EWRAM_DATA u16 sRecSent[4] = {0};
+static EWRAM_DATA u16 sRecSample[4][6] = {{0}};     // sizes 15 frames apart: only the oldest is sent
+static EWRAM_DATA u32 sLastSample = 0;
+static EWRAM_DATA bool8 sSetupDone = FALSE;
+static EWRAM_DATA u8 sSetupCursor = 0;
+static EWRAM_DATA u16 sPrevAck[4] = {0};
+
+#define SETUP_MONS      8
+#define SETUP_CHUNKS    (1 + SETUP_MONS * sizeof(struct Pokemon) / 8)   // 101
 
 void RemoteSpectate_ResetSender(void)
 {
@@ -114,6 +129,18 @@ void RemoteSpectate_ResetSender(void)
     sWatchedUntil = 0;
     sLastJoin = 0;
     sLastInfoSent = 0;
+    for (i = 0; i < 4; i++)
+    {
+        u8 j;
+
+        sRecSent[i] = 0;
+        sPrevAck[i] = 0;
+        for (j = 0; j < 6; j++)
+            sRecSample[i][j] = 0;
+    }
+    sLastSample = 0;
+    sSetupDone = FALSE;
+    sSetupCursor = 0;
 }
 
 // Keeps what can be shown and drops anything that would wait for a button.
@@ -231,6 +258,18 @@ void RemoteSpectate_BroadcastTick(void)
     bool8 watched = sWatchedUntil != 0 && now < sWatchedUntil;
     u8 i;
 
+    if (now - sLastSample >= 15)
+    {
+        u8 j;
+
+        sLastSample = now;
+        for (i = 0; i < 4; i++)
+        {
+            for (j = 0; j < 5; j++)
+                sRecSample[i][j] = sRecSample[i][j + 1];
+            sRecSample[i][5] = RecordedBattle_RecordSize(i);
+        }
+    }
     if (now - sLastInfoSent >= (watched ? INFO_PERIOD_WATCHED : INFO_PERIOD_FRAMES))
     {
         u8 name[8];
@@ -263,6 +302,61 @@ void RemoteSpectate_BroadcastTick(void)
                 memcpy(sLastMon[i], mon, 8);
                 sLastMonValid[i] = TRUE;
             }
+            return;
+        }
+    }
+    if (!sSetupDone)
+    {
+        u8 chunk[8];
+        u8 j;
+
+        if (sSetupCursor == 0)
+        {
+            u32 seed = RemoteBattle_GetSeed();
+
+            for (j = 0; j < 8; j++)
+                chunk[j] = 0;
+            chunk[0] = seed & 0xFF;
+            chunk[1] = (seed >> 8) & 0xFF;
+            chunk[2] = (seed >> 16) & 0xFF;
+            chunk[3] = seed >> 24;
+            chunk[4] = RemoteBattle_IsMirroredVersus() ? 1 : 0;
+        }
+        else
+        {
+            for (j = 0; j < 8; j++)
+            {
+                u16 at = (sSetupCursor - 1) * 8 + j;
+                u8 mon = at / sizeof(struct Pokemon);
+                const u8 *src = RecordedBattle_GetSavedMon(mon >= 4, mon & 3);
+
+                chunk[j] = src[at % sizeof(struct Pokemon)];
+            }
+        }
+        if (SpecSend(SUB_SPEC_SETUP, sSetupCursor, 0, chunk))
+            sSetupCursor = (sSetupCursor + 1) % SETUP_CHUNKS;
+        return;
+    }
+    for (i = 0; i < 4; i++)
+    {
+        u16 stable = sRecSample[i][0];
+
+        if (sRecSent[i] > stable)
+            sRecSent[i] = stable;
+        if (sRecSent[i] < stable)
+        {
+            u8 data[8];
+            u8 n = stable - sRecSent[i];
+            u8 j;
+
+            if (n > 6)
+                n = 6;
+            data[0] = sRecSent[i] & 0xFF;
+            data[1] = sRecSent[i] >> 8;
+            for (j = 0; j < 6; j++)
+                data[2 + j] = j < n ? RecordedBattle_RecordByte(i, sRecSent[i] + j) : 0;
+            if (SpecSend(SUB_SPEC_REC, i, n, data))
+                sRecSent[i] += n;
             return;
         }
     }
@@ -305,6 +399,10 @@ static void HandleJoin(const u8 *data)
             sLastMonValid[i] = FALSE;
         for (i = 0; i < RECENT_LINES; i++)
             sRecentSent[i] = 0;
+        for (i = 0; i < 4; i++)
+            sRecSent[i] = 0;
+        sSetupDone = FALSE;
+        sSetupCursor = 0;
     }
     sWatchedUntil = now + WATCHED_FRAMES;
     sLastJoin = now;
@@ -339,6 +437,15 @@ static EWRAM_DATA bool8 sRxActive = FALSE;
 static EWRAM_DATA bool8 sDirty = FALSE;
 static EWRAM_DATA bool8 sGotData = FALSE;
 static EWRAM_DATA u32 sLastHeard = 0;
+static EWRAM_DATA u8 sSetupMask[(SETUP_CHUNKS + 7) / 8] = {0};
+static EWRAM_DATA u8 sSetupGot = 0;
+static EWRAM_DATA bool8 sSetupReady = FALSE;
+static EWRAM_DATA u16 sRecRecv[4] = {0};
+static EWRAM_DATA bool8 sLaunched = FALSE;
+static EWRAM_DATA bool8 sInBattleWatch = FALSE;
+static EWRAM_DATA bool8 sQuit = FALSE;
+static EWRAM_DATA u16 sFastTurn = 0;
+static EWRAM_DATA u16 sFastFrames = 0;
 
 bool8 RemoteSpectate_IsFighting(u8 slot)
 {
@@ -388,6 +495,25 @@ void RemoteSpectate_HandleRx(u8 slot, const struct RemoteEvent *event)
         HandleJoin(data);
         return;
     }
+    if (sub == SUB_SPEC_ACK)
+    {
+        if (gRemoteVersus && gMain.inBattle && b == (NameTagOf(gSaveBlock2Ptr->playerName) & 0xFF))
+        {
+            sWatchedUntil = now + WATCHED_FRAMES;
+            if (a != 0)
+                sSetupDone = TRUE;
+            for (i = 0; i < 4; i++)
+            {
+                u16 got = data[i * 2] | (data[i * 2 + 1] << 8);
+
+                // The same number twice in a row, and short of what was sent: lost on the way.
+                if (got < sRecSent[i] && got == sPrevAck[i])
+                    sRecSent[i] = got;
+                sPrevAck[i] = got;
+            }
+        }
+        return;
+    }
     if (sub == SUB_SPEC_INFO)
     {
         sFightHeard[slot] = a != 0 ? (now | 1) : 0;
@@ -404,6 +530,33 @@ void RemoteSpectate_HandleRx(u8 slot, const struct RemoteEvent *event)
     if (!sWatching || slot != sWatchSlot)
         return;
     sLastHeard = now;
+    if (sub == SUB_SPEC_SETUP)
+    {
+        u8 *buf = RemoteSocial_ScratchBuffer();
+
+        if (a < SETUP_CHUNKS && !(sSetupMask[a / 8] & (1 << (a % 8))))
+        {
+            for (i = 0; i < 8; i++)
+                buf[a * 8 + i] = data[i];
+            sSetupMask[a / 8] |= 1 << (a % 8);
+            sSetupGot++;
+            if (sSetupGot >= SETUP_CHUNKS)
+                sSetupReady = TRUE;
+        }
+        return;
+    }
+    if (sub == SUB_SPEC_REC)
+    {
+        u16 pos = data[0] | (data[1] << 8);
+
+        if (a < 4 && b <= 6 && pos == sRecRecv[a])
+        {
+            for (i = 0; i < b; i++)
+                RecordedBattle_LivePut(a, pos + i, data[2 + i]);
+            sRecRecv[a] += b;
+        }
+        return;
+    }
     if (sub == SUB_SPEC_MON)
     {
         if (a < 4)
@@ -503,7 +656,7 @@ static const u8 sText_Watching[] = _("Watching ");
 static const u8 sText_StopHint[] = _("B: Stop");
 static const u8 sText_Lv[] = _("Lv");
 static const u8 sText_Slash[] = _("/");
-static const u8 sText_Waiting[] = _("Waiting for the battle...");
+static const u8 sText_Waiting[] = _("Loading the battle...");
 static const u8 sText_Over[] = _("The battle is over.");
 static const u8 sText_Slp[] = _("SLP");
 static const u8 sText_Psn[] = _("PSN");
@@ -603,6 +756,8 @@ static void Redraw(void)
     sDirty = FALSE;
 }
 
+static EWRAM_DATA bool8 sAckDue = FALSE;
+
 static void SendJoin(void)
 {
     u8 data[8] = {0};
@@ -611,6 +766,131 @@ static void SendJoin(void)
     data[0] = tag & 0xFF;
     data[1] = tag >> 8;
     SpecSend(SUB_SPEC_JOIN, 0, 0, data);
+}
+
+static bool8 SendAck(void)
+{
+    u8 data[8];
+    u8 i;
+
+    for (i = 0; i < 4; i++)
+    {
+        data[i * 2] = sRecRecv[i] & 0xFF;
+        data[i * 2 + 1] = sRecRecv[i] >> 8;
+    }
+    return SpecSend(SUB_SPEC_ACK, sSetupReady ? 1 : 0, NameTagOf(sTargetName) & 0xFF, data);
+}
+
+// Tells the fighters somebody is watching and what has arrived so far.
+static void SendHeartbeats(u32 now)
+{
+    if (now - sLastJoinSent >= JOIN_PERIOD_FRAMES)
+    {
+        SendJoin();
+        sLastJoinSent = now;
+        sAckDue = TRUE;
+    }
+    else if (sAckDue && SendAck())
+    {
+        sAckDue = FALSE;
+    }
+}
+
+static void CB2_SpectateDone(void)
+{
+    sInBattleWatch = FALSE;
+    sLaunched = FALSE;
+    sWatching = FALSE;
+    sFastTurn = 0;
+    RecordedBattle_LiveEnd();
+    RemoteBattle_SetSpectateMirror(FALSE);
+    gHitMarker &= ~HITMARKER_NO_ANIMATIONS;
+    LoadPlayerParty();
+    CalculatePlayerPartyCount();
+    gBattleTypeFlags = 0;
+    gTrainerBattleOpponent_A = 0;
+    gTrainerBattleOpponent_B = 0;
+    SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic);
+}
+
+// Everything needed has arrived: play the battle from its start, the same
+// way a recorded battle is played back. The recorded actions keep arriving
+// while it runs; the controllers wait whenever they have caught up.
+static void LaunchBattle(void)
+{
+    u8 *buf = RemoteSocial_ScratchBuffer();
+    u32 seed = buf[0] | (buf[1] << 8) | (buf[2] << 16) | ((u32)buf[3] << 24);
+    u8 i;
+    u16 j;
+
+    RemoteBattle_SetSpectateMirror((buf[4] & 1) != 0);
+    SavePlayerParty();
+    ZeroPlayerPartyMons();
+    ZeroEnemyPartyMons();
+    for (i = 0; i < 4; i++)
+    {
+        u8 *mine = (u8 *)&gPlayerParty[i];
+        u8 *theirs = (u8 *)&gEnemyParty[i];
+
+        for (j = 0; j < sizeof(struct Pokemon); j++)
+        {
+            mine[j] = buf[8 + i * sizeof(struct Pokemon) + j];
+            theirs[j] = buf[8 + (4 + i) * sizeof(struct Pokemon) + j];
+        }
+    }
+    CalculatePlayerPartyCount();
+    gRecordedBattleRngSeed = seed;
+    gTrainerBattleOpponent_A = TRAINER_SAWYER_1;
+    gTrainerBattleOpponent_B = 0;
+    gBattleTypeFlags = BATTLE_TYPE_TRAINER | BATTLE_TYPE_DOUBLE | BATTLE_TYPE_RECORDED;
+    gPreBattleCallback1 = gMain.callback1;
+    gMain.savedCallback = CB2_SpectateDone;
+    sLaunched = TRUE;
+    sInBattleWatch = TRUE;
+    sQuit = FALSE;
+    sFastTurn = 0;
+    sLastHeard = gMain.vblankCounter1;
+    FreeAllWindowBuffers();
+    Free(sTilemap);
+    sTilemap = NULL;
+    SetMainCallback2(CB2_InitBattle);
+}
+
+u8 RemoteSpectate_FrameHook(void)
+{
+    u32 now = gMain.vblankCounter1;
+
+    if (!sInBattleWatch)
+        return 0;
+    RemoteSio_Tick();
+    RemotePlayer_DrainBattleRx();
+    SendHeartbeats(now);
+    if (now - sLastHeard >= 600)
+        sQuit = TRUE;       // the fighter has gone quiet for 10 s
+    if (JOY_NEW(R_BUTTON))
+    {
+        sFastTurn = gBattleResults.battleTurnCounter + 1;
+        sFastFrames = 0;
+    }
+    if (sFastTurn != 0)
+    {
+        if (gBattleResults.battleTurnCounter >= sFastTurn || ++sFastFrames > 900)
+        {
+            sFastTurn = 0;
+            gHitMarker &= ~HITMARKER_NO_ANIMATIONS;
+        }
+        else
+        {
+            gHitMarker |= HITMARKER_NO_ANIMATIONS;
+            return 7;
+        }
+    }
+    return 0;
+}
+
+bool8 RemoteSpectate_WantsQuit(void)
+{
+    return sInBattleWatch && sQuit;
 }
 
 static void CB2_Spectate(void)
@@ -654,10 +934,11 @@ static void CB2_Spectate(void)
     case 2:
         RemoteSio_Tick();
         RemotePlayer_DrainBattleRx();
-        if (now - sLastJoinSent >= JOIN_PERIOD_FRAMES)
+        SendHeartbeats(now);
+        if (sSetupReady && !sOver)
         {
-            SendJoin();
-            sLastJoinSent = now;
+            LaunchBattle();
+            return;
         }
         if (!sOver && now - sLastHeard >= LOST_FRAMES)
         {
@@ -680,6 +961,7 @@ static void CB2_Spectate(void)
         if (!gPaletteFade.active)
         {
             sWatching = FALSE;
+            RecordedBattle_LiveEnd();
             FreeAllWindowBuffers();
             Free(sTilemap);
             sTilemap = NULL;
@@ -715,6 +997,16 @@ void RemoteSpectate_Start(void)
     sDirty = TRUE;
     sWatching = TRUE;
     sLastJoinSent = 0;
+    sAckDue = FALSE;
+    for (i = 0; i < 4; i++)
+        sRecRecv[i] = 0;
+    for (i = 0; i < sizeof(sSetupMask); i++)
+        sSetupMask[i] = 0;
+    sSetupGot = 0;
+    sSetupReady = FALSE;
+    sLaunched = FALSE;
+    sInBattleWatch = FALSE;
+    RecordedBattle_LiveBegin();
     sState = 0;
     PlayBGM(MUS_VS_TRAINER);
     SetMainCallback2(CB2_Spectate);

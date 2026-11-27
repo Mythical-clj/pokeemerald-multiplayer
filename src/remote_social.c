@@ -605,6 +605,11 @@ static EWRAM_DATA bool8 sLeftPending = FALSE;
 static EWRAM_DATA u8 sLeftName[PLAYER_NAME_LENGTH + 1] = {0};
 
 // The link says this player is gone for good (not just busy in a menu).
+u8 *RemoteSocial_ScratchBuffer(void)
+{
+    return (u8 *)sMixIn;
+}
+
 void RemoteSocial_NotePlayerLeft(u8 slot)
 {
     const u8 *name = RemoteBattle_GetNameOfSlot(slot);

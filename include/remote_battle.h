@@ -92,6 +92,9 @@ void RemoteBattle_GiveUpOnRemote(void);
 
 // Strings and picture for the partner in battle.
 const u8 *RemoteBattle_GetPartnerName(void);
+void RemoteBattle_SetSpectateMirror(bool8 mirrored);
+u32 RemoteBattle_GetSeed(void);
+bool8 RemoteBattle_IsMirroredVersus(void);
 const u8 *RemoteBattle_GetNameOfSlot(u8 slot);
 u8 RemoteBattle_GetPartnerBackPic(void);
 

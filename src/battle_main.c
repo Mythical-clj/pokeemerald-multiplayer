@@ -1,3 +1,4 @@
+#include "remote_spectate.h"
 #include "global.h"
 #include "remote_battle.h"
 #include "battle.h"
@@ -1877,14 +1878,23 @@ static void CB2_HandleStartMultiBattle(void)
 
 void BattleMainCB2(void)
 {
-    RemoteBattle_BattleTick();
-    AnimateSprites();
-    BuildOamBuffer();
-    RunTextPrinters();
-    UpdatePaletteFade();
-    RunTasks();
+    // A spectator can speed a turn up: the same frame is run several times.
+    u8 extra = RemoteSpectate_FrameHook();
+    u8 step;
 
-    if (JOY_HELD(B_BUTTON) && gBattleTypeFlags & BATTLE_TYPE_RECORDED && RecordedBattle_CanStopPlayback())
+    for (step = 0; step <= extra; step++)
+    {
+        if (step != 0)
+            BattleMainCB1();
+        RemoteBattle_BattleTick();
+        AnimateSprites();
+        BuildOamBuffer();
+        RunTextPrinters();
+        UpdatePaletteFade();
+        RunTasks();
+    }
+
+    if ((JOY_HELD(B_BUTTON) || RemoteSpectate_WantsQuit()) && gBattleTypeFlags & BATTLE_TYPE_RECORDED && RecordedBattle_CanStopPlayback())
     {
         // Player pressed B during recorded battle playback, end battle
         gSpecialVar_Result = gBattleOutcome = B_OUTCOME_PLAYER_TELEPORTED;
@@ -2122,7 +2132,7 @@ static void UNUSED HBlankCB_Battle(void)
 void VBlankCB_Battle(void)
 {
     // Change gRngSeed every vblank unless the battle could be recorded.
-    if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)))
+    if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)) && !gRemoteVersus)
         Random();
 
     SetGpuReg(REG_OFFSET_BG0HOFS, gBattle_BG0_X);

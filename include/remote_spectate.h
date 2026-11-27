@@ -5,6 +5,10 @@
 
 struct RemoteEvent;
 
+#define SUB_SPEC_SETUP  20  // a = chunk, 8 bytes: seed/flags, then the two starting teams
+#define SUB_SPEC_REC    21  // a = battler, b = count, 8 bytes: position (2) + up to 6 recorded bytes
+#define SUB_SPEC_ACK    22  // watcher to fighters: a = setup done, b = tag low byte, 4 x u16 bytes received
+
 // Message kinds inside REMOTE_EVENT_SOCIAL (sub byte). Anything from here up
 // belongs to the spectator module.
 #define SUB_SPEC_MON    16  // a = battler (0-3), 8 bytes: species, level, hp, max hp, status
@@ -22,5 +26,10 @@ void RemoteSpectate_NoteText(const u8 *text);
 
 // Script special: starts watching the player that was talked to.
 void RemoteSpectate_Start(void);
+
+// Called every battle frame: keeps the link going for a watcher and returns
+// how many extra frames to run (the R button skips ahead).
+u8 RemoteSpectate_FrameHook(void);
+bool8 RemoteSpectate_WantsQuit(void);
 
 #endif // GUARD_REMOTE_SPECTATE_H

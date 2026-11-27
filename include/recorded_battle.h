@@ -40,4 +40,12 @@ u8 GetRecordedBattleApprenticeLanguage(void);
 void RecordedBattle_SaveBattleOutcome(void);
 u16 *GetRecordedBattleEasyChatSpeech(void);
 
+void RecordedBattle_LiveBegin(void);
+void RecordedBattle_LiveEnd(void);
+void RecordedBattle_LivePut(u8 battler, u16 pos, u8 byte);
+bool8 RecordedBattle_LiveHas(u8 battler, u8 need);
+u16 RecordedBattle_RecordSize(u8 battler);
+u8 RecordedBattle_RecordByte(u8 battler, u16 pos);
+const u8 *RecordedBattle_GetSavedMon(bool8 enemy, u8 idx);
+
 #endif // GUARD_RECORDED_BATTLE_H

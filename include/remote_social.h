@@ -17,6 +17,7 @@ struct RemoteEvent;
 void RemoteSocial_Init(void);
 void RemoteSocial_Tick(void);
 void RemoteSocial_NotePlayerLeft(u8 slot);
+u8 *RemoteSocial_ScratchBuffer(void);   // 1500 bytes, free while no records are being mixed
 void RemoteSocial_SendDrop(void);
 void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event);
 
