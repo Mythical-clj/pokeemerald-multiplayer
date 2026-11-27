@@ -419,7 +419,7 @@ void RemoteSpectate_BroadcastTick(void)
     }
 }
 
-#define MAX_SPECTATORS 2
+#define MAX_SPECTATORS 4       // everyone else in a 6-player room
 
 static void HandleJoin(u8 slot, const u8 *data)
 {
@@ -431,7 +431,7 @@ static void HandleJoin(u8 slot, const u8 *data)
         return;
     if (tag != NameTagOf(gSaveBlock2Ptr->playerName))
         return;
-    // At most two spectators at a time (more players can be in the room now).
+    // Up to four spectators (the other players in a 6-player room), served in turns.
     if (sWatchedUntil[slot] == 0 || now >= sWatchedUntil[slot])
     {
         u8 active = 0;

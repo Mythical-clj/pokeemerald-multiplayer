@@ -3,6 +3,7 @@
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
 #include "field_weather.h"
+#include "main.h"
 #include "palette.h"
 #include "sprite.h"
 #include "player_look.h"
@@ -66,6 +67,57 @@ static void FreeLookPalettes(void)
             FreeSpritePaletteByTag(LOOK_PAL_TAG_BASE + 0x100 + kind * 32 + packed);
         }
     }
+}
+
+// Frees the look palettes that no sprite is drawn with. Used when a new look
+// finds the slots full: the palettes of the players on screen stay.
+static void FreeIfUnused(u16 tag, u16 used)
+{
+    u8 idx = IndexOfSpritePaletteTag(tag);
+
+    if (idx != 0xFF && !(used & (1 << idx)))
+        FreeSpritePaletteByTag(tag);
+}
+
+static void FreeUnusedLookPalettes(void)
+{
+    u16 used = 0;
+    u8 i, kind, packed;
+
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        if (gSprites[i].inUse)
+            used |= 1 << gSprites[i].oam.paletteNum;
+    }
+    for (packed = 1; packed < PLAYER_LOOK_SKINS; packed++)
+        FreeIfUnused(PARENT_PAL_TAG_BASE + packed, used);
+    for (kind = 0; kind < 3; kind++)
+    {
+        for (packed = 1; packed < 32; packed++)
+        {
+            FreeIfUnused(LOOK_PAL_TAG_BASE + kind * 32 + packed, used);
+            FreeIfUnused(LOOK_PAL_TAG_BASE + 0x100 + kind * 32 + packed, used);
+        }
+    }
+}
+
+// Loads a look palette. When the 16 slots are full the unused look palettes
+// are dropped (at most twice a second); if that is not enough the caller
+// falls back to the plain palette, so a crowd of different looks degrades to
+// the default colours instead of flickering or wearing someone else's.
+static u32 sNextFreeAt = 0;
+
+static u8 LoadLookPalette(const struct SpritePalette *sp)
+{
+    u8 idx = LoadSpritePalette(sp);
+
+    if (idx == 0xFF && gMain.vblankCounter1 >= sNextFreeAt)
+    {
+        sNextFreeAt = gMain.vblankCounter1 + 30;
+        FreeUnusedLookPalettes();
+        idx = LoadSpritePalette(sp);
+    }
+    return idx;
 }
 
 u8 PlayerLook_Pack(void)
@@ -198,14 +250,15 @@ void PlayerLook_ApplyToObject(struct ObjectEvent *object, u8 packed)
         PlayerLook_ApplyBuffer(buf, kind == 1, packed);
         sp.data = buf;
         sp.tag = tag;
-        idx = LoadSpritePalette(&sp);
+        idx = LoadLookPalette(&sp);
         if (idx == 0xFF)
         {
-            FreeLookPalettes();
-            idx = LoadSpritePalette(&sp);
-        }
-        if (idx == 0xFF)
+            // No slot for this look: show the plain palette.
+            idx = IndexOfSpritePaletteTag(info->paletteTag);
+            if (idx != 0xFF && sprite->oam.paletteNum != idx)
+                sprite->oam.paletteNum = idx;
             return;
+        }
         UpdateSpritePaletteWithWeather(idx);
     }
     if (sprite->oam.paletteNum != idx)
@@ -256,12 +309,7 @@ void PlayerLook_UpdateParents(void)
             PlayerLook_ApplyBuffer(buf, FALSE, skin);
             sp.data = buf;
             sp.tag = PARENT_PAL_TAG_BASE + skin;
-            idx = LoadSpritePalette(&sp);
-            if (idx == 0xFF)
-            {
-                FreeLookPalettes();
-                idx = LoadSpritePalette(&sp);
-            }
+            idx = LoadLookPalette(&sp);
             if (idx == 0xFF)
                 continue;
             UpdateSpritePaletteWithWeather(idx);
@@ -349,12 +397,7 @@ void PlayerLook_ApplyToReflection(struct ObjectEvent *object, struct Sprite *ref
         }
         sp.data = buf;
         sp.tag = tag;
-        idx = LoadSpritePalette(&sp);
-        if (idx == 0xFF)
-        {
-            FreeLookPalettes();
-            idx = LoadSpritePalette(&sp);
-        }
+        idx = LoadLookPalette(&sp);
         if (idx == 0xFF)
             return;
         UpdateSpritePaletteWithWeather(idx);
