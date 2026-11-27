@@ -149,7 +149,7 @@ void RemoteSpectate_ResetSender(void)
         sSetupCursor[i] = 0;
         for (j = 0; j < 4; j++)
         {
-            sRecSent[w][i][j] = 0;
+            sRecSent[i][j] = 0;
             sPrevAck[i][j] = 0;
         }
     }
