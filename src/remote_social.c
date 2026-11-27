@@ -601,9 +601,28 @@ void RemoteSocial_SendDrop(void)
     Send(SUB_DROP, 0, 0, NULL);
 }
 
+static EWRAM_DATA bool8 sLeftPending = FALSE;
+static EWRAM_DATA u8 sLeftName[PLAYER_NAME_LENGTH + 1] = {0};
+
+// The link says this player is gone for good (not just busy in a menu).
+void RemoteSocial_NotePlayerLeft(u8 slot)
+{
+    const u8 *name = RemoteBattle_GetNameOfSlot(slot);
+
+    StringCopy(sLeftName, name != NULL ? name : gText_Friend);
+    sLeftPending = TRUE;
+}
+
 void RemoteSocial_Tick(void)
 {
     sFrame++;
+
+    if (sLeftPending && sState == ST_IDLE && OverworldIsFree())
+    {
+        sLeftPending = FALSE;
+        StringCopy(gStringVar1, sLeftName);
+        ScriptContext_SetupScript(RemoteSocial_EventScript_PlayerLeft);
+    }
 
     if (sMailRepeatsLeft != 0 && sFrame % MAIL_REPEAT_FRAMES == 0)
     {

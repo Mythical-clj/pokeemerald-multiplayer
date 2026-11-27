@@ -308,3 +308,12 @@ RemoteSocial_Text_WantsToTrade:
 RemoteSocial_Text_Spectate:
 	.string "{STR_VAR_1} is in a battle.\n"
 	.string "Would you like to spectate?$"
+
+RemoteSocial_EventScript_PlayerLeft::
+	lockall
+	msgbox RemoteSocial_Text_PlayerLeft, MSGBOX_DEFAULT
+	releaseall
+	end
+
+RemoteSocial_Text_PlayerLeft:
+	.string "{STR_VAR_1} left the game.$"

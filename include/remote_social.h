@@ -16,6 +16,7 @@ struct RemoteEvent;
 
 void RemoteSocial_Init(void);
 void RemoteSocial_Tick(void);
+void RemoteSocial_NotePlayerLeft(u8 slot);
 void RemoteSocial_SendDrop(void);
 void RemoteSocial_HandleRx(u8 slot, const struct RemoteEvent *event);
 
@@ -35,5 +36,6 @@ bool8 RemoteSocial_TakeBattleRequest(struct VersusRequest *out);
 
 extern const u8 RemoteSocial_EventScript_Interact[];
 extern const u8 RemoteSocial_EventScript_Incoming[];
+extern const u8 RemoteSocial_EventScript_PlayerLeft[];
 
 #endif // GUARD_REMOTE_SOCIAL_H

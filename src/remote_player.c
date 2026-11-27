@@ -876,6 +876,8 @@ static void QueueEvent(const struct RemoteEvent *event)
 
     if (kind == REMOTE_EVENT_LEAVE)
     {
+        if (slot->known)
+            RemoteSocial_NotePlayerLeft(slotId);
         DespawnSlot(slotId);
         slot->known = FALSE;
         slot->forceResync = TRUE;
