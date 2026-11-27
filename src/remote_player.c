@@ -28,7 +28,7 @@
 // Queued events at which the remote speeds up to catch up.
 #define HURRY_THRESHOLD         4
 #define SPAWN_RETRY_FRAMES      60
-#define SILENT_DESPAWN_FRAMES   600     // each player speaks at least once a second
+#define SILENT_DESPAWN_FRAMES   10800   // 3 min: a player in a menu, the mail screen or a fight says nothing but stays standing where they were
 // Remote players are only created inside this window around the local player.
 #define VIEW_HALF_WIDTH         7
 #define VIEW_HALF_HEIGHT        5
