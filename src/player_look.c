@@ -105,7 +105,7 @@ static void FreeUnusedLookPalettes(void)
 // are dropped (at most twice a second); if that is not enough the caller
 // falls back to the plain palette, so a crowd of different looks degrades to
 // the default colours instead of flickering or wearing someone else's.
-static u32 sNextFreeAt = 0;
+static EWRAM_DATA u32 sNextFreeAt = 0;
 
 static u8 LoadLookPalette(const struct SpritePalette *sp)
 {
