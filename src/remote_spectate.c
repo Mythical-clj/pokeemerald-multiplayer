@@ -12,7 +12,7 @@
 #include "load_save.h"
 #include "pokemon.h"
 #include "recorded_battle.h"
-#include "battle_transition.h"
+#include "battle_setup.h"
 #include "palette.h"
 #include "script.h"
 #include "sound.h"
