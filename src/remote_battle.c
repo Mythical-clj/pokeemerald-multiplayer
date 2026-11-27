@@ -953,6 +953,21 @@ void RemoteBattle_SetSpectateMirror(bool8 mirrored)
     sSpectateMirror = mirrored;
 }
 
+static EWRAM_DATA u16 sSpecPhrases[2][PHRASE_WORDS] = {{0}};   // the opponent's "won" and "lost"
+
+u16 RemoteBattle_GetOppPhraseWord(u8 which, u8 idx)
+{
+    if (sPartnerSlot >= REMOTE_MAX_PLAYERS || !sPeers[sPartnerSlot].ready || which > 1 || idx >= PHRASE_WORDS)
+        return 0;
+    return sPeers[sPartnerSlot].phrases[which + 1][idx];
+}
+
+void RemoteBattle_SetSpectatePhrase(u8 which, u8 idx, u16 word)
+{
+    if (which < 2 && idx < PHRASE_WORDS)
+        sSpecPhrases[which][idx] = word;
+}
+
 void RemoteBattle_SetSpectatePartner(const u8 *name, u8 gender, u8 look)
 {
     u8 i;
@@ -1743,7 +1758,11 @@ void RemoteBattle_VersusPhraseToString(u8 which)
 {
     if (!gRemoteHumanBattle)
     {
-        gStringVar4[0] = EOS;
+        // A spectator is told the opponent's "won" and "lost" phrases.
+        if (which == 1 || which == 2)
+            FrontierSpeechToString(sSpecPhrases[which - 1]);
+        else
+            gStringVar4[0] = EOS;
         return;
     }
     if (sPartnerSlot < REMOTE_MAX_PLAYERS && which < PHRASE_COUNT && sPeers[sPartnerSlot].ready)

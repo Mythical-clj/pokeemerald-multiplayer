@@ -107,18 +107,20 @@ static EWRAM_DATA u8 sRecentSeq[RECENT_LINES] = {0};
 static EWRAM_DATA u8 sRecentSent[RECENT_LINES] = {0};   // parts already sent
 static EWRAM_DATA u8 sRecentCount = 0;
 static EWRAM_DATA u8 sNextSeq = 0;
-static EWRAM_DATA u32 sWatchedUntil = 0;
+static EWRAM_DATA u32 sWatchedUntil[REMOTE_MAX_PLAYERS] = {0};   // per watcher (by slot)
+static EWRAM_DATA u8 sTurnSlot = 0;
 static EWRAM_DATA u32 sLastJoin = 0;
 static EWRAM_DATA u32 sLastInfoSent = 0;
-static EWRAM_DATA u16 sRecSent[4] = {0};
+static EWRAM_DATA u16 sRecSent[REMOTE_MAX_PLAYERS][4] = {{0}};
 static EWRAM_DATA u16 sRecSample[4][6] = {{0}};     // sizes 15 frames apart: only the oldest is sent
 static EWRAM_DATA u32 sLastSample = 0;
-static EWRAM_DATA bool8 sSetupDone = FALSE;
-static EWRAM_DATA u8 sSetupCursor = 0;
-static EWRAM_DATA u16 sPrevAck[4] = {0};
+static EWRAM_DATA bool8 sSetupDone[REMOTE_MAX_PLAYERS] = {0};
+static EWRAM_DATA u8 sSetupCursor[REMOTE_MAX_PLAYERS] = {0};
+static EWRAM_DATA u16 sPrevAck[REMOTE_MAX_PLAYERS][4] = {{0}};
 
 #define SETUP_MONS      8
-#define SETUP_CHUNKS    (1 + SETUP_MONS * sizeof(struct Pokemon) / 8)   // 101
+#define SETUP_PHRASE_BYTES  24      // the opponent's "won" and "lost" phrases
+#define SETUP_CHUNKS    (1 + (SETUP_MONS * sizeof(struct Pokemon) + SETUP_PHRASE_BYTES) / 8)   // 104
 
 void RemoteSpectate_ResetSender(void)
 {
@@ -128,21 +130,29 @@ void RemoteSpectate_ResetSender(void)
         sLastMonValid[i] = FALSE;
     sRecentCount = 0;
     sNextSeq = 0;
-    sWatchedUntil = 0;
     sLastJoin = 0;
     sLastInfoSent = 0;
     for (i = 0; i < 4; i++)
     {
         u8 j;
 
-        sRecSent[i] = 0;
-        sPrevAck[i] = 0;
         for (j = 0; j < 6; j++)
             sRecSample[i][j] = 0;
     }
     sLastSample = 0;
-    sSetupDone = FALSE;
-    sSetupCursor = 0;
+    for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
+    {
+        u8 j;
+
+        sWatchedUntil[i] = 0;
+        sSetupDone[i] = FALSE;
+        sSetupCursor[i] = 0;
+        for (j = 0; j < 4; j++)
+        {
+            sRecSent[w][i][j] = 0;
+            sPrevAck[i][j] = 0;
+        }
+    }
 }
 
 // Keeps what can be shown and drops anything that would wait for a button.
@@ -257,8 +267,23 @@ static void BuildMon(u8 battler, u8 *out)
 void RemoteSpectate_BroadcastTick(void)
 {
     u32 now = gMain.vblankCounter1;
-    bool8 watched = sWatchedUntil != 0 && now < sWatchedUntil;
+    bool8 watched = FALSE;
+    u8 w = 0;
     u8 i;
+
+    // Watchers are served in turns: one message per frame, for one of them.
+    for (i = 1; i <= REMOTE_MAX_PLAYERS; i++)
+    {
+        u8 cand = (sTurnSlot + i) % REMOTE_MAX_PLAYERS;
+
+        if (sWatchedUntil[cand] != 0 && now < sWatchedUntil[cand])
+        {
+            if (!watched)
+                w = cand;
+            watched = TRUE;
+        }
+    }
+    sTurnSlot = w;
 
     // Only what can no longer be taken back is sent: while the players are
     // still choosing, the newest bytes may still be cancelled.
@@ -302,12 +327,12 @@ void RemoteSpectate_BroadcastTick(void)
             return;
         }
     }
-    if (!sSetupDone)
+    if (!sSetupDone[w])
     {
         u8 chunk[8];
         u8 j;
 
-        if (sSetupCursor == 0)
+        if (sSetupCursor[w] == 0)
         {
             u32 seed = RemoteBattle_GetSeed();
 
@@ -327,37 +352,48 @@ void RemoteSpectate_BroadcastTick(void)
         {
             for (j = 0; j < 8; j++)
             {
-                u16 at = (sSetupCursor - 1) * 8 + j;
-                u8 mon = at / sizeof(struct Pokemon);
-                const u8 *src = RecordedBattle_GetSavedMon(mon >= 4, mon & 3);
+                u16 at = (sSetupCursor[w] - 1) * 8 + j;
 
-                chunk[j] = src[at % sizeof(struct Pokemon)];
+                if (at < SETUP_MONS * sizeof(struct Pokemon))
+                {
+                    u8 mon = at / sizeof(struct Pokemon);
+                    const u8 *src = RecordedBattle_GetSavedMon(mon >= 4, mon & 3);
+
+                    chunk[j] = src[at % sizeof(struct Pokemon)];
+                }
+                else
+                {
+                    u8 p = at - SETUP_MONS * sizeof(struct Pokemon);
+                    u16 word = RemoteBattle_GetOppPhraseWord(p / 12, (p % 12) / 2);
+
+                    chunk[j] = (p & 1) ? word >> 8 : word & 0xFF;
+                }
             }
         }
-        if (SpecSend(SUB_SPEC_SETUP, sSetupCursor, 0, chunk))
-            sSetupCursor = (sSetupCursor + 1) % SETUP_CHUNKS;
+        if (SpecSend(SUB_SPEC_SETUP, sSetupCursor[w], 0, chunk))
+            sSetupCursor[w] = (sSetupCursor[w] + 1) % SETUP_CHUNKS;
         return;
     }
     for (i = 0; i < 4; i++)
     {
         u16 stable = sRecSample[i][0];
 
-        if (sRecSent[i] > stable)
-            sRecSent[i] = stable;
-        if (sRecSent[i] < stable)
+        if (sRecSent[w][i] > stable)
+            sRecSent[w][i] = stable;
+        if (sRecSent[w][i] < stable)
         {
             u8 data[8];
-            u8 n = stable - sRecSent[i];
+            u8 n = stable - sRecSent[w][i];
             u8 j;
 
             if (n > 6)
                 n = 6;
-            data[0] = sRecSent[i] & 0xFF;
-            data[1] = sRecSent[i] >> 8;
+            data[0] = sRecSent[w][i] & 0xFF;
+            data[1] = sRecSent[w][i] >> 8;
             for (j = 0; j < 6; j++)
-                data[2 + j] = j < n ? RecordedBattle_RecordByte(i, sRecSent[i] + j) : 0;
+                data[2 + j] = j < n ? RecordedBattle_RecordByte(i, sRecSent[w][i] + j) : 0;
             if (SpecSend(SUB_SPEC_REC, i, n, data))
-                sRecSent[i] += n;
+                sRecSent[w][i] += n;
             return;
         }
     }
@@ -383,7 +419,7 @@ void RemoteSpectate_BroadcastTick(void)
     }
 }
 
-static void HandleJoin(const u8 *data)
+static void HandleJoin(u8 slot, const u8 *data)
 {
     u32 now = gMain.vblankCounter1;
     u16 tag = data[0] | (data[1] << 8);
@@ -394,18 +430,21 @@ static void HandleJoin(const u8 *data)
     if (tag != NameTagOf(gSaveBlock2Ptr->playerName))
         return;
     // A watcher that was away for a moment gets everything again.
-    if (sWatchedUntil == 0 || now >= sWatchedUntil)
+    if (sWatchedUntil[slot] == 0 || now >= sWatchedUntil[slot])
     {
         for (i = 0; i < 4; i++)
             sLastMonValid[i] = FALSE;
         for (i = 0; i < RECENT_LINES; i++)
             sRecentSent[i] = 0;
         for (i = 0; i < 4; i++)
-            sRecSent[i] = 0;
-        sSetupDone = FALSE;
-        sSetupCursor = 0;
+        {
+            sRecSent[slot][i] = 0;
+            sPrevAck[slot][i] = 0;
+        }
+        sSetupDone[slot] = FALSE;
+        sSetupCursor[slot] = 0;
     }
-    sWatchedUntil = now + WATCHED_FRAMES;
+    sWatchedUntil[slot] = now + WATCHED_FRAMES;
     sLastJoin = now;
 }
 
@@ -493,24 +532,24 @@ void RemoteSpectate_HandleRx(u8 slot, const struct RemoteEvent *event)
         return;
     if (sub == SUB_SPEC_JOIN)
     {
-        HandleJoin(data);
+        HandleJoin(slot, data);
         return;
     }
     if (sub == SUB_SPEC_ACK)
     {
         if (gRemoteVersus && gMain.inBattle && b == (NameTagOf(gSaveBlock2Ptr->playerName) & 0xFF))
         {
-            sWatchedUntil = now + WATCHED_FRAMES;
+            sWatchedUntil[slot] = now + WATCHED_FRAMES;
             if (a != 0)
-                sSetupDone = TRUE;
+                sSetupDone[slot] = TRUE;
             for (i = 0; i < 4; i++)
             {
                 u16 got = data[i * 2] | (data[i * 2 + 1] << 8);
 
                 // The same number twice in a row, and short of what was sent: lost on the way.
-                if (got < sRecSent[i] && got == sPrevAck[i])
-                    sRecSent[i] = got;
-                sPrevAck[i] = got;
+                if (got < sRecSent[slot][i] && got == sPrevAck[slot][i])
+                    sRecSent[slot][i] = got;
+                sPrevAck[slot][i] = got;
             }
         }
         return;
@@ -856,6 +895,15 @@ static void LaunchBattle(void)
     gLinkPlayers[1].gender = (buf[4] & 4) ? FEMALE : MALE;
     gRecordedBattleMultiplayerId = 0;
     sOppLook = buf[6];
+    for (i = 0; i < 2; i++)
+    {
+        for (j = 0; j < 6; j++)
+        {
+            u16 at = 8 + SETUP_MONS * sizeof(struct Pokemon) + i * 12 + j * 2;
+
+            RemoteBattle_SetSpectatePhrase(i, j, buf[at] | (buf[at + 1] << 8));
+        }
+    }
     RemoteBattle_SetSpectatePartner(sOppName, gLinkPlayers[1].gender, buf[6]);
     gRemoteVersus = TRUE;
     SavePlayerParty();
