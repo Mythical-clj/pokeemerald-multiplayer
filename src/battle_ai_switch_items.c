@@ -103,7 +103,7 @@ static bool8 ShouldSwitchIfWonderGuard(void)
                 continue;
 
             moveFlags = AI_TypeCalc(move, gBattleMons[opposingBattler].species, gBattleMons[opposingBattler].ability);
-            if (moveFlags & MOVE_RESULT_SUPER_EFFECTIVE && Random() % 3 < 2)
+            if (moveFlags & MOVE_RESULT_SUPER_EFFECTIVE && Random2() % 3 < 2)
             {
                 // We found a mon.
                 *(gBattleStruct->AI_monToSwitchIntoId + gActiveBattler) = i;
@@ -125,7 +125,7 @@ static bool8 FindMonThatAbsorbsOpponentsMove(void)
     struct Pokemon *party;
     s32 i;
 
-    if (HasSuperEffectiveMoveAgainstOpponents(TRUE) && Random() % 3 != 0)
+    if (HasSuperEffectiveMoveAgainstOpponents(TRUE) && Random2() % 3 != 0)
         return FALSE;
     if (gLastLandedMoves[gActiveBattler] == MOVE_NONE)
         return FALSE;
@@ -203,7 +203,7 @@ static bool8 FindMonThatAbsorbsOpponentsMove(void)
         else
             monAbility = gSpeciesInfo[species].abilities[0];
 
-        if (absorbingTypeAbility == monAbility && Random() & 1)
+        if (absorbingTypeAbility == monAbility && Random2() & 1)
         {
             // we found a mon.
             *(gBattleStruct->AI_monToSwitchIntoId + gActiveBattler) = i;
@@ -226,14 +226,14 @@ static bool8 ShouldSwitchIfNaturalCure(void)
 
     if ((gLastLandedMoves[gActiveBattler] == MOVE_NONE
       || gLastLandedMoves[gActiveBattler] == MOVE_UNAVAILABLE)
-     && Random() & 1)
+     && Random2() & 1)
     {
         *(gBattleStruct->AI_monToSwitchIntoId + gActiveBattler) = PARTY_SIZE;
         BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, B_ACTION_SWITCH, 0);
         return TRUE;
     }
     else if (gBattleMoves[gLastLandedMoves[gActiveBattler]].power == 0
-          && Random() & 1)
+          && Random2() & 1)
     {
         *(gBattleStruct->AI_monToSwitchIntoId + gActiveBattler) = PARTY_SIZE;
         BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, B_ACTION_SWITCH, 0);
@@ -245,7 +245,7 @@ static bool8 ShouldSwitchIfNaturalCure(void)
     if (FindMonWithFlagsAndSuperEffective(MOVE_RESULT_NOT_VERY_EFFECTIVE, 1))
         return TRUE;
 
-    if (Random() & 1)
+    if (Random2() & 1)
     {
         *(gBattleStruct->AI_monToSwitchIntoId + gActiveBattler) = PARTY_SIZE;
         BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, B_ACTION_SWITCH, 0);
@@ -279,7 +279,7 @@ static bool8 HasSuperEffectiveMoveAgainstOpponents(bool8 noRng)
             {
                 if (noRng)
                     return TRUE;
-                if (Random() % 10 != 0)
+                if (Random2() % 10 != 0)
                     return TRUE;
             }
         }
@@ -302,7 +302,7 @@ static bool8 HasSuperEffectiveMoveAgainstOpponents(bool8 noRng)
             {
                 if (noRng)
                     return TRUE;
-                if (Random() % 10 != 0)
+                if (Random2() % 10 != 0)
                     return TRUE;
             }
         }
@@ -413,7 +413,7 @@ static bool8 FindMonWithFlagsAndSuperEffective(u8 flags, u8 moduloPercent)
                     continue;
 
                 moveFlags = AI_TypeCalc(move, gBattleMons[battlerIn1].species, gBattleMons[battlerIn1].ability);
-                if (moveFlags & MOVE_RESULT_SUPER_EFFECTIVE && Random() % moduloPercent == 0)
+                if (moveFlags & MOVE_RESULT_SUPER_EFFECTIVE && Random2() % moduloPercent == 0)
                 {
                     *(gBattleStruct->AI_monToSwitchIntoId + gActiveBattler) = i;
                     BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, B_ACTION_SWITCH, 0);
@@ -657,7 +657,7 @@ u8 GetMostSuitableMonToSwitchInto(void)
             battlerIn2 = GetBattlerAtPosition(BATTLE_PARTNER(GetBattlerPosition(gActiveBattler)));
 
         // UB: It considers the opponent only player's side even though it can battle alongside player.
-        opposingBattler = Random() & BIT_FLANK;
+        opposingBattler = Random2() & BIT_FLANK;
         if (gAbsentBattlerFlags & gBitTable[opposingBattler])
             opposingBattler ^= BIT_FLANK;
     }
