@@ -115,7 +115,7 @@ static EWRAM_DATA u16 sRecSent[REMOTE_MAX_PLAYERS][4] = {{0}};
 static EWRAM_DATA u16 sRecSample[4][6] = {{0}};     // sizes 15 frames apart: only the oldest is sent
 static EWRAM_DATA u32 sLastSample = 0;
 static EWRAM_DATA bool8 sSetupDone[REMOTE_MAX_PLAYERS] = {0};
-static EWRAM_DATA u8 sSetupCursor[REMOTE_MAX_PLAYERS] = {0};
+static EWRAM_DATA u8 sSetupCursor = 0;      // one cycle of setup chunks, heard by every watcher
 static EWRAM_DATA u16 sPrevAck[REMOTE_MAX_PLAYERS][4] = {{0}};
 
 #define SETUP_MONS      8
@@ -259,13 +259,13 @@ void RemoteSpectate_ResetSender(void)
             sRecSample[i][j] = 0;
     }
     sLastSample = 0;
+    sSetupCursor = 0;
     for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
     {
         u8 j;
 
         sWatchedUntil[i] = 0;
         sSetupDone[i] = FALSE;
-        sSetupCursor[i] = 0;
         for (j = 0; j < 4; j++)
         {
             sRecSent[i][j] = 0;
@@ -460,9 +460,9 @@ void RemoteSpectate_BroadcastTick(void)
                 if (sNpcPlayerMons + sNpcEnemyMons > NPC_MAX_MONS)
                     sNpcEnemyMons = NPC_MAX_MONS - sNpcPlayerMons;
             }
-            BuildNpcChunk(sSetupCursor[w], chunk);
+            BuildNpcChunk(sSetupCursor, chunk);
         }
-        else if (sSetupCursor[w] == 0)
+        else if (sSetupCursor == 0)
         {
             u32 seed = RemoteBattle_GetSeed();
 
@@ -483,7 +483,7 @@ void RemoteSpectate_BroadcastTick(void)
         {
             for (j = 0; j < 8; j++)
             {
-                u16 at = (sSetupCursor[w] - 1) * 8 + j;
+                u16 at = (sSetupCursor - 1) * 8 + j;
 
                 if (at < SETUP_MONS * sizeof(struct Pokemon))
                 {
@@ -501,8 +501,8 @@ void RemoteSpectate_BroadcastTick(void)
                 }
             }
         }
-        if (SpecSend(SUB_SPEC_SETUP, sSetupCursor[w], 0, chunk))
-            sSetupCursor[w] = (sSetupCursor[w] + 1) % SetupTotal();
+        if (SpecSend(SUB_SPEC_SETUP, sSetupCursor, 0, chunk))
+            sSetupCursor = (sSetupCursor + 1) % SetupTotal();
         return;
     }
     for (i = 0; i < 4; i++)
@@ -588,7 +588,6 @@ static void HandleJoin(u8 slot, const u8 *data)
             sPrevAck[slot][i] = 0;
         }
         sSetupDone[slot] = FALSE;
-        sSetupCursor[slot] = 0;
     }
     sWatchedUntil[slot] = now + WATCHED_FRAMES;
     sLastJoin = now;
