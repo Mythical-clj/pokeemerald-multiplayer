@@ -67,6 +67,7 @@ static void CB2_RemoteBattleDone(void);
 #define NEAR_TIMEOUT_FRAMES     1500    // 25 s for the other player to come within range
 #define GUEST_ACCEPT_FRAMES     24      // acks sent before the guest's battle starts
 #define GUEST_PENDING_FRAMES    1200     // how long the guest waits for a moment to join
+#define INVITE_FRAMES           600      // 10 s to answer "Join?" (the host waits 20 s)
 #define REMOTE_WAIT_FRAMES      5400    // (kept for reference) old fixed wait
 #define LINK_DEAD_FRAMES        5400    // nothing heard from the other game for 90 s: contact lost
 #define DEADLOCK_FRAMES         1200    // both games wait for each other, all acked, for 20 s
@@ -244,6 +245,12 @@ static EWRAM_DATA u8 sStartSlot = 0;
 static EWRAM_DATA u16 sGuestPendingAge = 0;
 static EWRAM_DATA u16 sGuestAcceptAge = 0;
 static EWRAM_DATA bool8 sGuestAccepting = FALSE;
+// A nearby player was asked to join a fight they did not start.
+static EWRAM_DATA bool8 sInviteActive = FALSE;
+static EWRAM_DATA bool8 sInviteAccepted = FALSE;
+static EWRAM_DATA u16 sInviteAge = 0;
+static EWRAM_DATA bool8 sDeclinePending = FALSE;
+static EWRAM_DATA u8 sDeclineSession = 0;
 static EWRAM_DATA bool8 sRemoteAI = FALSE;
 static EWRAM_DATA u16 sWaitFrames = 0;
 static EWRAM_DATA u16 sBattleFrame = 0;
@@ -601,7 +608,8 @@ static EWRAM_DATA u16 sNearWait = 0;
 
 static const u8 sText_WaitingForPlayer[] = _("Waiting for the other player...");
 static const u8 sText_WaitingNear[] = _("Waiting for the other player\nto come closer...");
-static const u8 sText_NoReply[] = _("No reply.\nStarting the battle alone.");
+static const u8 sText_NoReply[] = _("The other player did not join.\nStarting the battle alone.");
+static const u8 sText_InviteTail[] = _(" is fighting!\nJoin?  A: Yes   B: No");
 
 // The message box of the field, as the link rooms use while they wait.
 void RemoteBattle_ShowWaiting(u8 which)
@@ -613,7 +621,7 @@ void RemoteBattle_ShowWaiting(u8 which)
         sWaitShown = TRUE;
     }
     FillWindowPixelBuffer(0, PIXEL_FILL(1));
-    AddTextPrinterParameterized(0, FONT_NORMAL, which == 2 ? sText_WaitingNear : (which == 1 ? sText_NoReply : sText_WaitingForPlayer), 0, 1, 0, NULL);
+    AddTextPrinterParameterized(0, FONT_NORMAL, which == 3 ? gStringVar4 : (which == 2 ? sText_WaitingNear : (which == 1 ? sText_NoReply : sText_WaitingForPlayer)), 0, 1, 0, NULL);
     CopyWindowToVram(0, COPYWIN_FULL);
 }
 
@@ -713,6 +721,17 @@ static void HandleCompetingStart(u8 slot, const struct StartMessage *msg)
 
 static void HandleStartMessage(u8 slot, const struct StartMessage *msg)
 {
+    if (msg->part == 2)
+    {
+        // The invited player said no: the fight goes ahead alone.
+        if (sRole == ROLE_HOST && sAwaitingAck && !sStartAcked && gRemoteHumanBattle
+         && slot == sPartnerSlot && msg->session == sSession)
+        {
+            sStartTimedOut = TRUE;
+            UndoHostSetup();
+        }
+        return;
+    }
     if (sRole == ROLE_HOST && sAwaitingAck && !sStartAcked && gRemoteHumanBattle)
     {
         HandleCompetingStart(slot, msg);
@@ -1264,7 +1283,7 @@ static bool8 GuestCanJoin(void)
         return FALSE;
     // Only a game that went to the same trainer itself joins: someone who
     // merely stands nearby is not pulled into the fight.
-    if (!sYielded)
+    if (!sYielded && !sInviteAccepted)
         return FALSE;
     if (gPlayerAvatar.tileTransitionState != T_NOT_MOVING)
         return FALSE;
@@ -1322,6 +1341,49 @@ static void StartGuestBattle(void)
     BattleSetup_StartRemoteGuestBattle();
 }
 
+static void TrySendDecline(void)
+{
+    u8 data[6];
+    u8 i;
+
+    for (i = 0; i < 6; i++)
+        data[i] = 0;
+    if (PushMessage(REMOTE_EVENT_BSTART, 2, 0, sDeclineSession, data))
+        sDeclinePending = FALSE;
+}
+
+static void DeclineInvite(void)
+{
+    sInviteActive = FALSE;
+    sLastSession = sStartSession;       // the same fight is not offered again
+    sStartParts = 0;
+    sDeclineSession = sStartSession;
+    sDeclinePending = TRUE;
+    RemoteBattle_HideWaiting();
+    UnlockPlayerFieldControls();
+    TrySendDecline();
+}
+
+// This game is free to be asked: out in the field, not busy with anything,
+// and it can build the same battle (same trainer, the teams the host chose).
+static bool8 CanBeInvited(void)
+{
+    struct PeerTeam *peer = &sPeers[sStartSlot];
+    u8 gender;
+
+    if (gMain.inBattle || gMain.callback2 != CB2_Overworld || ArePlayerFieldControlsLocked())
+        return FALSE;
+    if (gPlayerAvatar.tileTransitionState != T_NOT_MOVING)
+        return FALSE;
+    if (sTrainerA == 0 || sTrainerA >= TRAINERS_COUNT)
+        return FALSE;
+    if (!sSendValid || sSendTag != sGuestTag)
+        return FALSE;
+    if (!peer->ready || peer->readyTag != sHostTag)
+        return FALSE;
+    return RemotePlayer_SlotIsNear(sStartSlot, PARTNER_MAX_DISTANCE + 2, &gender);
+}
+
 static void TickGuest(void)
 {
     if (sRole == ROLE_GUEST && sGuestAccepting)
@@ -1337,11 +1399,59 @@ static void TickGuest(void)
         return;
     }
 
+    if (sDeclinePending)
+        TrySendDecline();
+
+    if (sInviteActive)
+    {
+        if (sRole != ROLE_NONE || sStartParts != 3 || gMain.inBattle)
+        {
+            // The fight is gone (or this game is busy): drop the question.
+            sInviteActive = FALSE;
+            RemoteBattle_HideWaiting();
+            UnlockPlayerFieldControls();
+            return;
+        }
+        if (gMain.newKeys & A_BUTTON)
+        {
+            sInviteActive = FALSE;
+            sInviteAccepted = TRUE;
+        }
+        else if ((gMain.newKeys & B_BUTTON) || ++sInviteAge >= INVITE_FRAMES)
+        {
+            DeclineInvite();
+            return;
+        }
+        else
+        {
+            return;
+        }
+    }
+
     if (sRole != ROLE_NONE || sStartParts != 3)
         return;
-    if (!sYielded && ++sGuestPendingAge > GUEST_PENDING_FRAMES)
+    if (!sYielded && !sInviteAccepted)
     {
-        sStartParts = 0;
+        if (++sGuestPendingAge > GUEST_PENDING_FRAMES)
+        {
+            sStartParts = 0;
+            return;
+        }
+        // Somebody nearby started a fight: ask this player, once, if they
+        // want to be the partner. Only the player the host picked is asked
+        // (the host names them by team tag).
+        if (CanBeInvited())
+        {
+            struct PeerTeam *host = &sPeers[sStartSlot];
+
+            StringCopy(gStringVar4, host->name);
+            StringAppend(gStringVar4, sText_InviteTail);
+            sInviteActive = TRUE;
+            sInviteAge = 0;
+            LockPlayerFieldControls();
+            RemoteBattle_ShowWaiting(3);
+            PlaySE(SE_PIN);
+        }
         return;
     }
     if (!GuestCanJoin())
@@ -1500,6 +1610,7 @@ static void CB2_RemoteBattleDone(void)
     gRemoteBattleActive = FALSE;
     gRemoteSplitTrainer = FALSE;
     gRemoteHumanBattle = FALSE;
+    sInviteAccepted = FALSE;
     sRole = ROLE_NONE;
     sRemoteAI = FALSE;
     sLockedSlot = REMOTE_MAX_PLAYERS;

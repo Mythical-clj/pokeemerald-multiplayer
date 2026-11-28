@@ -537,17 +537,34 @@ bool8 RemotePlayer_SlotIsNear(u8 slot, u8 maxDistance, u8 *gender)
 
 bool8 RemotePlayer_FindNearby(u8 maxDistance, u8 *slot, u8 *gender)
 {
+    struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
     u8 i;
+    u8 best = REMOTE_MAX_PLAYERS;
+    s16 bestDist = 0x7FFF;
 
+    // The closest one wins, not the first one found.
     for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
     {
-        if (RemotePlayer_SlotIsNear(i, maxDistance, gender))
+        struct ObjectEvent *object;
+        u8 g;
+        s16 dist;
+
+        if (!RemotePlayer_SlotIsNear(i, maxDistance, &g))
+            continue;
+        object = &gObjectEvents[sSlots[i].objectId];
+        dist = Abs16(object->currentCoords.x - player->currentCoords.x)
+             + Abs16(object->currentCoords.y - player->currentCoords.y);
+        if (dist < bestDist)
         {
-            *slot = i;
-            return TRUE;
+            bestDist = dist;
+            best = i;
+            *gender = g;
         }
     }
-    return FALSE;
+    if (best == REMOTE_MAX_PLAYERS)
+        return FALSE;
+    *slot = best;
+    return TRUE;
 }
 
 // The remote player the avatar means when pressing A towards (x, y): on the
