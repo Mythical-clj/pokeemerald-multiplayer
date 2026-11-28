@@ -983,6 +983,21 @@ u16 RemoteBattle_GetOppPhraseWord(u8 which, u8 idx)
     return sPeers[sPartnerSlot].phrases[which + 1][idx];
 }
 
+static EWRAM_DATA u16 sSpecOwnPhrases[2][PHRASE_WORDS] = {{0}};   // the watched player's own "won" and "lost"
+
+u16 RemoteBattle_GetOwnPhraseWord(u8 which, u8 idx)
+{
+    if (which > 1 || idx >= PHRASE_WORDS)
+        return 0;
+    return sSendPhrases[which + 1][idx];
+}
+
+void RemoteBattle_SetSpectateOwnPhrase(u8 which, u8 idx, u16 word)
+{
+    if (which < 2 && idx < PHRASE_WORDS)
+        sSpecOwnPhrases[which][idx] = word;
+}
+
 void RemoteBattle_SetSpectatePhrase(u8 which, u8 idx, u16 word)
 {
     if (which < 2 && idx < PHRASE_WORDS)
@@ -1876,7 +1891,23 @@ void RemoteBattle_VersusPhraseToString(u8 which)
     {
         // A spectator is told the opponent's "won" and "lost" phrases.
         if (which == 1 || which == 2)
+        {
+            // What the loser says first, then what the winner says. The
+            // watched player is the one whose own phrase comes second.
+            u8 second[128];
+            u8 *end;
+
+            FrontierSpeechToString(sSpecOwnPhrases[which == 2 ? 0 : 1]);
+            StringCopyN(second, gStringVar4, sizeof(second) - 1);
+            second[sizeof(second) - 1] = EOS;
             FrontierSpeechToString(sSpecPhrases[which - 1]);
+            if (second[0] != EOS)
+            {
+                end = gStringVar4 + StringLength(gStringVar4);
+                *end++ = CHAR_PROMPT_CLEAR;
+                StringCopy(end, second);
+            }
+        }
         else
             gStringVar4[0] = EOS;
         return;

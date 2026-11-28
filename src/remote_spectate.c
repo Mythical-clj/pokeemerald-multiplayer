@@ -119,8 +119,8 @@ static EWRAM_DATA u8 sSetupCursor = 0;      // one cycle of setup chunks, heard 
 static EWRAM_DATA u16 sPrevAck[REMOTE_MAX_PLAYERS][4] = {{0}};
 
 #define SETUP_MONS      8
-#define SETUP_PHRASE_BYTES  24      // the opponent's "won" and "lost" phrases
-#define SETUP_CHUNKS    (1 + (SETUP_MONS * sizeof(struct Pokemon) + SETUP_PHRASE_BYTES) / 8)   // 104
+#define SETUP_PHRASE_BYTES  48      // the opponent's "won" and "lost" phrases, then the fighter's own
+#define SETUP_CHUNKS    (1 + (SETUP_MONS * sizeof(struct Pokemon) + SETUP_PHRASE_BYTES) / 8)   // 107
 #define NPC_HEADER_CHUNKS   3       // seed/flags, battle type + trainers, environment + counts
 #define NPC_MAX_MONS        12      // six a side
 #define SETUP_CHUNKS_MAX    (NPC_HEADER_CHUNKS + (NPC_MAX_MONS * sizeof(struct Pokemon) + 7) / 8)   // 153
@@ -495,7 +495,12 @@ void RemoteSpectate_BroadcastTick(void)
                 else
                 {
                     u8 p = at - SETUP_MONS * sizeof(struct Pokemon);
-                    u16 word = RemoteBattle_GetOppPhraseWord(p / 12, (p % 12) / 2);
+                    u16 word;
+
+                    if (p < 24)
+                        word = RemoteBattle_GetOppPhraseWord(p / 12, (p % 12) / 2);
+                    else
+                        word = RemoteBattle_GetOwnPhraseWord((p - 24) / 12, ((p - 24) % 12) / 2);
 
                     chunk[j] = (p & 1) ? word >> 8 : word & 0xFF;
                 }
@@ -1120,6 +1125,7 @@ static void LaunchBattle(void)
             u16 at = 8 + SETUP_MONS * sizeof(struct Pokemon) + i * 12 + j * 2;
 
             RemoteBattle_SetSpectatePhrase(i, j, buf[at] | (buf[at + 1] << 8));
+            RemoteBattle_SetSpectateOwnPhrase(i, j, buf[at + 24] | (buf[at + 25] << 8));
         }
     }
     RemoteBattle_SetSpectatePartner(sOppName, gLinkPlayers[1].gender, buf[6]);

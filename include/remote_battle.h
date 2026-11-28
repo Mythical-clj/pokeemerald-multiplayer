@@ -98,6 +98,8 @@ void RemoteBattle_SetSpectatePartner(const u8 *name, u8 gender, u8 look);
 u8 RemoteBattle_GetPartnerGender(void);
 u16 RemoteBattle_GetOppPhraseWord(u8 which, u8 idx);
 void RemoteBattle_SetSpectatePhrase(u8 which, u8 idx, u16 word);
+void RemoteBattle_SetSpectateOwnPhrase(u8 which, u8 idx, u16 word);
+u16 RemoteBattle_GetOwnPhraseWord(u8 which, u8 idx);
 bool8 RemoteBattle_IsMirroredVersus(void);
 const u8 *RemoteBattle_GetNameOfSlot(u8 slot);
 u8 RemoteBattle_GetPartnerBackPic(void);
