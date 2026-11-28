@@ -695,6 +695,7 @@ static void CB2_InitBattleInternal(void)
     else
         SetMainCallback2(CB2_HandleStartBattle);
 
+    RemoteSpectate_NpcBattleBegin();
     if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_RECORDED)))
     {
         // With a human partner both games draw the same trainer team.
@@ -2138,7 +2139,7 @@ static void UNUSED HBlankCB_Battle(void)
 void VBlankCB_Battle(void)
 {
     // Change gRngSeed every vblank unless the battle could be recorded.
-    if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)) && !gRemoteVersus)
+    if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)) && !gRemoteVersus && !RemoteSpectate_Active())
         Random();
 
     SetGpuReg(REG_OFFSET_BG0HOFS, gBattle_BG0_X);

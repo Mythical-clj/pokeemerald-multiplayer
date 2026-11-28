@@ -21,6 +21,9 @@ bool8 RemoteSpectate_IsFighting(u8 slot);
 
 // Fighter side
 void RemoteSpectate_ResetSender(void);
+bool8 RemoteSpectate_Active(void);        // a fight that watchers can follow
+void RemoteSpectate_NpcBattleBegin(void);
+void RemoteSpectate_NpcTick(void);
 void RemoteSpectate_BroadcastTick(void);
 void RemoteSpectate_NoteText(const u8 *text);
 

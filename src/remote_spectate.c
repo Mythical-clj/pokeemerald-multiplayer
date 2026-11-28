@@ -121,6 +121,125 @@ static EWRAM_DATA u16 sPrevAck[REMOTE_MAX_PLAYERS][4] = {{0}};
 #define SETUP_MONS      8
 #define SETUP_PHRASE_BYTES  24      // the opponent's "won" and "lost" phrases
 #define SETUP_CHUNKS    (1 + (SETUP_MONS * sizeof(struct Pokemon) + SETUP_PHRASE_BYTES) / 8)   // 104
+#define NPC_HEADER_CHUNKS   3       // seed/flags, battle type + trainers, environment + counts
+#define NPC_MAX_MONS        12      // six a side
+#define SETUP_CHUNKS_MAX    (NPC_HEADER_CHUNKS + (NPC_MAX_MONS * sizeof(struct Pokemon) + 7) / 8)   // 153
+
+// A fight against the game's own trainers is told the same way as a friendly
+// battle between players: only the starting teams and what each side picks
+// are sent, and the watcher plays the fight again.
+static EWRAM_DATA bool8 sNpcFight = FALSE;
+static EWRAM_DATA u8 sNpcPlayerMons = 0;
+static EWRAM_DATA u8 sNpcEnemyMons = 0;
+
+bool8 RemoteSpectate_Active(void)
+{
+    return gRemoteVersus || sNpcFight;
+}
+
+static u8 CountSavedMons(bool8 enemy)
+{
+    u8 n = 0;
+    u8 i;
+
+    for (i = 0; i < PARTY_SIZE; i++)
+    {
+        if (GetMonData((struct Pokemon *)RecordedBattle_GetSavedMon(enemy, i), MON_DATA_SPECIES, NULL) != SPECIES_NONE)
+            n = i + 1;
+    }
+    return n;
+}
+
+// Called as a battle begins. Only a lone player's fight against trainers can
+// be watched for now; the link has to be up with somebody on it.
+void RemoteSpectate_NpcBattleBegin(void)
+{
+    sNpcFight = FALSE;
+    if (gRemoteVersus || gRemoteHumanBattle)
+        return;
+    if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER)
+     || (gBattleTypeFlags & (BATTLE_TYPE_RECORDED_INVALID | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_INGAME_PARTNER | BATTLE_TYPE_MULTI)))
+        return;
+    if (!RemotePlayer_AnyoneKnown())
+        return;
+    RemoteSpectate_ResetSender();
+    sNpcPlayerMons = 0;
+    sNpcEnemyMons = 0;
+    sNpcFight = TRUE;
+}
+
+// A fight with trainers keeps the link going and tells the others about it.
+void RemoteSpectate_NpcTick(void)
+{
+    if (!sNpcFight)
+        return;
+    RemoteSio_Tick();
+    RemotePlayer_DrainBattleRx();
+    RemoteSpectate_BroadcastTick();
+}
+
+static u8 SetupTotal(void)
+{
+    if (!sNpcFight)
+        return SETUP_CHUNKS;
+    return NPC_HEADER_CHUNKS + (u8)(((sNpcPlayerMons + sNpcEnemyMons) * sizeof(struct Pokemon) + 7) / 8);
+}
+
+static void BuildNpcChunk(u8 cursor, u8 *chunk)
+{
+    u8 j;
+
+    for (j = 0; j < 8; j++)
+        chunk[j] = 0;
+    if (cursor == 0)
+    {
+        u32 seed = gRecordedBattleRngSeed;
+
+        chunk[0] = seed & 0xFF;
+        chunk[1] = (seed >> 8) & 0xFF;
+        chunk[2] = (seed >> 16) & 0xFF;
+        chunk[3] = seed >> 24;
+        chunk[4] = 8 | (gSaveBlock2Ptr->playerGender == FEMALE ? 2 : 0);
+        chunk[5] = PlayerLook_Pack();
+        chunk[7] = SetupTotal();
+    }
+    else if (cursor == 1)
+    {
+        u32 flags = gBattleTypeFlags & ~(BATTLE_TYPE_LINK_IN_BATTLE);
+
+        chunk[0] = flags & 0xFF;
+        chunk[1] = (flags >> 8) & 0xFF;
+        chunk[2] = (flags >> 16) & 0xFF;
+        chunk[3] = flags >> 24;
+        chunk[4] = gTrainerBattleOpponent_A & 0xFF;
+        chunk[5] = gTrainerBattleOpponent_A >> 8;
+        chunk[6] = gTrainerBattleOpponent_B & 0xFF;
+        chunk[7] = gTrainerBattleOpponent_B >> 8;
+    }
+    else if (cursor == 2)
+    {
+        chunk[0] = gBattleEnvironment;
+        chunk[1] = sNpcPlayerMons;
+        chunk[2] = sNpcEnemyMons;
+    }
+    else
+    {
+        for (j = 0; j < 8; j++)
+        {
+            u16 at = (cursor - NPC_HEADER_CHUNKS) * 8 + j;
+            u16 size = sizeof(struct Pokemon);
+            u8 mon = at / size;
+
+            if (mon < sNpcPlayerMons + sNpcEnemyMons)
+            {
+                bool8 enemy = mon >= sNpcPlayerMons;
+                const u8 *src = RecordedBattle_GetSavedMon(enemy, enemy ? mon - sNpcPlayerMons : mon);
+
+                chunk[j] = src[at % size];
+            }
+        }
+    }
+}
 
 void RemoteSpectate_ResetSender(void)
 {
@@ -295,7 +414,7 @@ void RemoteSpectate_BroadcastTick(void)
     if (now - sLastInfoSent >= (watched ? INFO_PERIOD_WATCHED : INFO_PERIOD_FRAMES))
     {
         u8 name[8];
-        const u8 *opp = RemoteBattle_GetPartnerName();
+        const u8 *opp = sNpcFight ? gTrainers[gTrainerBattleOpponent_A].trainerName : RemoteBattle_GetPartnerName();
 
         for (i = 0; i < 8; i++)
             name[i] = (opp != NULL && i < PLAYER_NAME_LENGTH) ? opp[i] : EOS;
@@ -332,7 +451,18 @@ void RemoteSpectate_BroadcastTick(void)
         u8 chunk[8];
         u8 j;
 
-        if (sSetupCursor[w] == 0)
+        if (sNpcFight)
+        {
+            if (sNpcPlayerMons == 0)
+            {
+                sNpcPlayerMons = CountSavedMons(FALSE);
+                sNpcEnemyMons = CountSavedMons(TRUE);
+                if (sNpcPlayerMons + sNpcEnemyMons > NPC_MAX_MONS)
+                    sNpcEnemyMons = NPC_MAX_MONS - sNpcPlayerMons;
+            }
+            BuildNpcChunk(sSetupCursor[w], chunk);
+        }
+        else if (sSetupCursor[w] == 0)
         {
             u32 seed = RemoteBattle_GetSeed();
 
@@ -347,6 +477,7 @@ void RemoteSpectate_BroadcastTick(void)
                      | (RemoteBattle_GetPartnerGender() == FEMALE ? 4 : 0);
             chunk[5] = PlayerLook_Pack();
             chunk[6] = RemoteBattle_GetVersusLook();
+            chunk[7] = SETUP_CHUNKS;
         }
         else
         {
@@ -371,7 +502,7 @@ void RemoteSpectate_BroadcastTick(void)
             }
         }
         if (SpecSend(SUB_SPEC_SETUP, sSetupCursor[w], 0, chunk))
-            sSetupCursor[w] = (sSetupCursor[w] + 1) % SETUP_CHUNKS;
+            sSetupCursor[w] = (sSetupCursor[w] + 1) % SetupTotal();
         return;
     }
     for (i = 0; i < 4; i++)
@@ -427,7 +558,7 @@ static void HandleJoin(u8 slot, const u8 *data)
     u16 tag = data[0] | (data[1] << 8);
     u8 i;
 
-    if (!gRemoteVersus || !gMain.inBattle)
+    if (!RemoteSpectate_Active() || !gMain.inBattle)
         return;
     if (tag != NameTagOf(gSaveBlock2Ptr->playerName))
         return;
@@ -552,7 +683,7 @@ void RemoteSpectate_HandleRx(u8 slot, const struct RemoteEvent *event)
     }
     if (sub == SUB_SPEC_ACK)
     {
-        if (gRemoteVersus && gMain.inBattle && b == (NameTagOf(gSaveBlock2Ptr->playerName) & 0xFF))
+        if (RemoteSpectate_Active() && gMain.inBattle && b == (NameTagOf(gSaveBlock2Ptr->playerName) & 0xFF))
         {
             sWatchedUntil[slot] = now + WATCHED_FRAMES;
             if (a != 0)

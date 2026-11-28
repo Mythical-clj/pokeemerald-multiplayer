@@ -268,6 +268,18 @@ void RemotePlayer_DrainBattleRx(void)
     }
 }
 
+bool8 RemotePlayer_AnyoneKnown(void)
+{
+    u8 i;
+
+    for (i = 0; i < REMOTE_MAX_PLAYERS; i++)
+    {
+        if (sSlots[i].known)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 bool8 RemotePlayer_InLoopback(void)
 {
 #if REMOTE_PLAYER_LOOPBACK

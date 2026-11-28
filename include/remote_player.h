@@ -66,6 +66,7 @@ bool8 RemotePlayer_PopTx(struct RemoteEvent *event);
 bool8 RemotePlayer_TryPushTxPriority(const struct RemoteEvent *event);
 bool8 RemotePlayer_TryPushTx(const struct RemoteEvent *event);
 u8 RemotePlayer_NextTxSeq(void);
+bool8 RemotePlayer_AnyoneKnown(void);
 bool8 RemotePlayer_InLoopback(void);
 u8 RemotePlayer_GetGender(u8 slot);
 u8 RemotePlayer_GetLook(u8 slot);

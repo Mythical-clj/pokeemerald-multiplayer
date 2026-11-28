@@ -1191,7 +1191,10 @@ void RemoteBattle_ApplySeed(void)
 void RemoteBattle_BattleTick(void)
 {
     if (!gRemoteHumanBattle || sRole == ROLE_NONE)
+    {
+        RemoteSpectate_NpcTick();
         return;
+    }
 
     sBattleFrame++;
     if (gBattleResults.battleTurnCounter != sLastTurnSeen
