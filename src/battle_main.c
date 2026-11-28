@@ -674,7 +674,7 @@ static void CB2_InitBattleInternal(void)
 
     gBattleEnvironment = BattleSetup_GetEnvironmentId();
     if (gBattleTypeFlags & BATTLE_TYPE_RECORDED)
-        gBattleEnvironment = BATTLE_ENVIRONMENT_BUILDING;
+        gBattleEnvironment = RemoteSpectate_IsWatching() ? RemoteSpectate_WatchEnv() : BATTLE_ENVIRONMENT_BUILDING;
 
     InitBattleBgsVideo();
     LoadBattleTextboxAndBackground();

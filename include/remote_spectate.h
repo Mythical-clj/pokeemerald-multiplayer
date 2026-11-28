@@ -36,5 +36,6 @@ u8 RemoteSpectate_FrameHook(void);
 bool8 RemoteSpectate_WantsQuit(void);
 bool8 RemoteSpectate_IsWatching(void);
 u8 RemoteSpectate_OppLook(void);
+u8 RemoteSpectate_WatchEnv(void);       // the fighter's battle background
 
 #endif // GUARD_REMOTE_SPECTATE_H

@@ -623,7 +623,9 @@ static EWRAM_DATA bool8 sRxActive = FALSE;
 static EWRAM_DATA bool8 sDirty = FALSE;
 static EWRAM_DATA bool8 sGotData = FALSE;
 static EWRAM_DATA u32 sLastHeard = 0;
-static EWRAM_DATA u8 sSetupMask[(SETUP_CHUNKS + 7) / 8] = {0};
+static EWRAM_DATA u8 sSetupMask[(SETUP_CHUNKS_MAX + 7) / 8] = {0};
+static EWRAM_DATA u8 sSetupTotal = 0;
+static EWRAM_DATA u8 sWatchEnv = 0;
 static EWRAM_DATA u8 sSetupGot = 0;
 static EWRAM_DATA bool8 sSetupReady = FALSE;
 static EWRAM_DATA u16 sRecRecv[4] = {0};
@@ -720,13 +722,15 @@ void RemoteSpectate_HandleRx(u8 slot, const struct RemoteEvent *event)
     {
         u8 *buf = RemoteSocial_ScratchBuffer();
 
-        if (a < SETUP_CHUNKS && !(sSetupMask[a / 8] & (1 << (a % 8))))
+        if (a < SETUP_CHUNKS_MAX && !(sSetupMask[a / 8] & (1 << (a % 8))))
         {
             for (i = 0; i < 8; i++)
                 buf[a * 8 + i] = data[i];
             sSetupMask[a / 8] |= 1 << (a % 8);
             sSetupGot++;
-            if (sSetupGot >= SETUP_CHUNKS)
+            if (a == 0 && data[7] != 0 && data[7] <= SETUP_CHUNKS_MAX)
+                sSetupTotal = data[7];
+            if ((sSetupMask[0] & 1) && sSetupGot >= sSetupTotal)
                 sSetupReady = TRUE;
         }
         return;
@@ -1018,6 +1022,70 @@ static void CB2_SpectateDone(void)
     SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic);
 }
 
+// A fight against the game's trainers: the same replay, with the real
+// trainers, battle type and teams the fighter had.
+static void LaunchNpcBattle(const u8 *buf)
+{
+    u32 seed = buf[0] | (buf[1] << 8) | (buf[2] << 16) | ((u32)buf[3] << 24);
+    u32 flags = buf[8] | (buf[9] << 8) | (buf[10] << 16) | ((u32)buf[11] << 24);
+    u8 playerMons = buf[17] > PARTY_SIZE ? PARTY_SIZE : buf[17];
+    u8 enemyMons = buf[18] > PARTY_SIZE ? PARTY_SIZE : buf[18];
+    u8 i;
+    u16 j;
+
+    RemoteBattle_SetSpectateMirror(FALSE);
+    for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
+        sSavedName[i] = gSaveBlock2Ptr->playerName[i];
+    sSavedGender = gSaveBlock2Ptr->playerGender;
+    for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
+        gSaveBlock2Ptr->playerName[i] = sTargetName[i];
+    gSaveBlock2Ptr->playerGender = (buf[4] & 2) ? FEMALE : MALE;
+    gLinkPlayers[0].gender = gSaveBlock2Ptr->playerGender;
+    gRecordedBattleMultiplayerId = 0;
+    sOppLook = 0;
+    sWatchEnv = buf[16];
+    gRemoteVersus = FALSE;
+    SavePlayerParty();
+    ZeroPlayerPartyMons();
+    ZeroEnemyPartyMons();
+    for (i = 0; i < playerMons; i++)
+    {
+        u8 *mine = (u8 *)&gPlayerParty[i];
+
+        for (j = 0; j < sizeof(struct Pokemon); j++)
+            mine[j] = buf[24 + i * sizeof(struct Pokemon) + j];
+    }
+    for (i = 0; i < enemyMons; i++)
+    {
+        u8 *theirs = (u8 *)&gEnemyParty[i];
+
+        for (j = 0; j < sizeof(struct Pokemon); j++)
+            theirs[j] = buf[24 + (playerMons + i) * sizeof(struct Pokemon) + j];
+    }
+    CalculatePlayerPartyCount();
+    CalculateEnemyPartyCount();
+    gRecordedBattleRngSeed = seed;
+    gTrainerBattleOpponent_A = buf[12] | (buf[13] << 8);
+    gTrainerBattleOpponent_B = buf[14] | (buf[15] << 8);
+    gBattleTypeFlags = (flags & ~(BATTLE_TYPE_LINK | BATTLE_TYPE_LINK_IN_BATTLE)) | BATTLE_TYPE_RECORDED;
+    gPreBattleCallback1 = gMain.callback1;
+    gMain.savedCallback = CB2_SpectateDone;
+    sLaunched = TRUE;
+    sInBattleWatch = TRUE;
+    sQuit = FALSE;
+    sFastTurn = 0;
+    sLastHeard = gMain.vblankCounter1;
+    FreeAllWindowBuffers();
+    Free(sTilemap);
+    sTilemap = NULL;
+    SetMainCallback2(CB2_InitBattle);
+}
+
+u8 RemoteSpectate_WatchEnv(void)
+{
+    return sWatchEnv;
+}
+
 // Everything needed has arrived: play the battle from its start, the same
 // way a recorded battle is played back. The recorded actions keep arriving
 // while it runs; the controllers wait whenever they have caught up.
@@ -1028,6 +1096,11 @@ static void LaunchBattle(void)
     u8 i;
     u16 j;
 
+    if (buf[4] & 8)
+    {
+        LaunchNpcBattle(buf);
+        return;
+    }
     RemoteBattle_SetSpectateMirror((buf[4] & 1) != 0);
     // The battle is shown as the watched player's: their name and looks stand
     // in for this player's until it is over.
@@ -1231,6 +1304,8 @@ void RemoteSpectate_Start(void)
     for (i = 0; i < sizeof(sSetupMask); i++)
         sSetupMask[i] = 0;
     sSetupGot = 0;
+    sSetupTotal = SETUP_CHUNKS;
+    sWatchEnv = BATTLE_ENVIRONMENT_BUILDING;
     sSetupReady = FALSE;
     sLaunched = FALSE;
     sInBattleWatch = FALSE;
