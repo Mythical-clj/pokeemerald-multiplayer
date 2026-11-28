@@ -5,6 +5,7 @@
 #include "battle_factory.h"
 #include "battle_setup.h"
 #include "data.h"
+#include "constants/trainers.h"
 #include "item.h"
 #include "pokemon.h"
 #include "random.h"
@@ -309,6 +310,22 @@ void BattleAI_HandleItemUseBeforeAISetup(u8 defaultScoreMoves)
     BattleAI_SetupAIData(defaultScoreMoves);
 }
 
+// A little smarter than the stock trainers, using only scripts the game
+// already has: every trainer avoids useless moves and takes a knockout when
+// it has one; the ones that already weigh move value also watch their HP;
+// gym leaders, the Elite Four and the champion also open with setup moves.
+static u32 RaiseTrainerAi(u32 flags, u16 trainerId)
+{
+    u8 class = gTrainers[trainerId].trainerClass;
+
+    flags |= AI_SCRIPT_CHECK_BAD_MOVE | AI_SCRIPT_TRY_TO_FAINT;
+    if (flags & AI_SCRIPT_CHECK_VIABILITY)
+        flags |= AI_SCRIPT_HP_AWARE;
+    if (class == TRAINER_CLASS_LEADER || class == TRAINER_CLASS_ELITE_FOUR || class == TRAINER_CLASS_CHAMPION)
+        flags |= AI_SCRIPT_CHECK_VIABILITY | AI_SCRIPT_HP_AWARE | AI_SCRIPT_SETUP_FIRST_TURN;
+    return flags;
+}
+
 void BattleAI_SetupAIData(u8 defaultScoreMoves)
 {
     s32 i;
@@ -371,9 +388,9 @@ void BattleAI_SetupAIData(u8 defaultScoreMoves)
     else if (gBattleTypeFlags & (BATTLE_TYPE_FRONTIER | BATTLE_TYPE_EREADER_TRAINER | BATTLE_TYPE_TRAINER_HILL | BATTLE_TYPE_SECRET_BASE))
         AI_THINKING_STRUCT->aiFlags = AI_SCRIPT_CHECK_BAD_MOVE | AI_SCRIPT_CHECK_VIABILITY | AI_SCRIPT_TRY_TO_FAINT;
     else if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
-        AI_THINKING_STRUCT->aiFlags = gTrainers[gTrainerBattleOpponent_A].aiFlags | gTrainers[gTrainerBattleOpponent_B].aiFlags;
+        AI_THINKING_STRUCT->aiFlags = RaiseTrainerAi(gTrainers[gTrainerBattleOpponent_A].aiFlags | gTrainers[gTrainerBattleOpponent_B].aiFlags, gTrainerBattleOpponent_A);
     else
-       AI_THINKING_STRUCT->aiFlags = gTrainers[gTrainerBattleOpponent_A].aiFlags;
+       AI_THINKING_STRUCT->aiFlags = RaiseTrainerAi(gTrainers[gTrainerBattleOpponent_A].aiFlags, gTrainerBattleOpponent_A);
 
     if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE)
         AI_THINKING_STRUCT->aiFlags |= AI_SCRIPT_DOUBLE_BATTLE; // act smart in doubles and don't attack your partner
