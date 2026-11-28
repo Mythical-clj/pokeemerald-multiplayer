@@ -998,6 +998,27 @@ void RemoteBattle_SetSpectateOwnPhrase(u8 which, u8 idx, u16 word)
         sSpecOwnPhrases[which][idx] = word;
 }
 
+// After a trainer's speech in gStringVar4: the watched player's own phrase
+// (0 won, 1 lost) on the next page.
+void RemoteBattle_AppendWatchedPhrase(u8 which)
+{
+    u8 first[160];
+    u8 second[128];
+    u8 *end;
+
+    StringCopyN(first, gStringVar4, sizeof(first) - 1);
+    first[sizeof(first) - 1] = EOS;
+    FrontierSpeechToString(sSpecOwnPhrases[which]);
+    StringCopyN(second, gStringVar4, sizeof(second) - 1);
+    second[sizeof(second) - 1] = EOS;
+    StringCopy(gStringVar4, first);
+    if (second[0] == EOS)
+        return;
+    end = gStringVar4 + StringLength(gStringVar4);
+    *end++ = CHAR_PROMPT_CLEAR;
+    StringCopy(end, second);
+}
+
 void RemoteBattle_SetSpectatePhrase(u8 which, u8 idx, u16 word)
 {
     if (which < 2 && idx < PHRASE_WORDS)

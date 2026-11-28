@@ -123,7 +123,9 @@ static EWRAM_DATA u16 sPrevAck[REMOTE_MAX_PLAYERS][4] = {{0}};
 #define SETUP_CHUNKS    (1 + (SETUP_MONS * sizeof(struct Pokemon) + SETUP_PHRASE_BYTES) / 8)   // 107
 #define NPC_HEADER_CHUNKS   3       // seed/flags, battle type + trainers, environment + counts
 #define NPC_MAX_MONS        12      // six a side
-#define SETUP_CHUNKS_MAX    (NPC_HEADER_CHUNKS + (NPC_MAX_MONS * sizeof(struct Pokemon) + 7) / 8)   // 153
+#define SPEECH_BYTES        100     // a trainer's defeat speech, with the end mark
+#define NPC_TAIL_BYTES      (24 + 2 * SPEECH_BYTES)     // the player's own phrases, then two speeches
+#define SETUP_CHUNKS_MAX    (NPC_HEADER_CHUNKS + (NPC_MAX_MONS * sizeof(struct Pokemon) + NPC_TAIL_BYTES + 7) / 8)   // 181
 
 // A fight against the game's own trainers is told the same way as a friendly
 // battle between players: only the starting teams and what each side picks
@@ -131,6 +133,7 @@ static EWRAM_DATA u16 sPrevAck[REMOTE_MAX_PLAYERS][4] = {{0}};
 static EWRAM_DATA bool8 sNpcFight = FALSE;
 static EWRAM_DATA u8 sNpcPlayerMons = 0;
 static EWRAM_DATA u8 sNpcEnemyMons = 0;
+static EWRAM_DATA u8 sNpcSpeechLen[2] = {0};
 
 bool8 RemoteSpectate_Active(void)
 {
@@ -182,7 +185,35 @@ static u8 SetupTotal(void)
 {
     if (!sNpcFight)
         return SETUP_CHUNKS;
-    return NPC_HEADER_CHUNKS + (u8)(((sNpcPlayerMons + sNpcEnemyMons) * sizeof(struct Pokemon) + 7) / 8);
+    return NPC_HEADER_CHUNKS + (u8)(((sNpcPlayerMons + sNpcEnemyMons) * sizeof(struct Pokemon) + NPC_TAIL_BYTES + 7) / 8);
+}
+
+// How much of a speech fits, cut at a whole character.
+static u8 SpeechLen(const u8 *text)
+{
+    u8 i = 0;
+
+    if (text == NULL)
+        return 0;
+    while (text[i] != EOS)
+    {
+        u8 step = 1;
+
+        if (text[i] == EXT_CTRL_CODE_BEGIN)
+        {
+            u8 skip = GetExtCtrlCodeLength(text[i + 1]);
+
+            step = 1 + (skip != 0 ? skip : 1);
+        }
+        else if (text[i] == CHAR_EXTRA_SYMBOL || text[i] == 0xFD)
+        {
+            step = 2;
+        }
+        if (i + step > SPEECH_BYTES - 1)
+            break;
+        i += step;
+    }
+    return i;
 }
 
 static void BuildNpcChunk(u8 cursor, u8 *chunk)
@@ -236,6 +267,25 @@ static void BuildNpcChunk(u8 cursor, u8 *chunk)
                 const u8 *src = RecordedBattle_GetSavedMon(enemy, enemy ? mon - sNpcPlayerMons : mon);
 
                 chunk[j] = src[at % size];
+            }
+            else
+            {
+                u16 p = at - (sNpcPlayerMons + sNpcEnemyMons) * size;
+
+                if (p < 24)
+                {
+                    u16 word = RemoteBattle_GetOwnPhraseWord(p / 12, (p % 12) / 2);
+
+                    chunk[j] = (p & 1) ? word >> 8 : word & 0xFF;
+                }
+                else if (p < NPC_TAIL_BYTES)
+                {
+                    u8 which = (p - 24) / SPEECH_BYTES;
+                    u8 k = (p - 24) % SPEECH_BYTES;
+                    const u8 *text = BattleSetup_GetDefeatSpeech(which);
+
+                    chunk[j] = k < sNpcSpeechLen[which] ? text[k] : EOS;
+                }
             }
         }
     }
@@ -459,6 +509,8 @@ void RemoteSpectate_BroadcastTick(void)
                 sNpcEnemyMons = CountSavedMons(TRUE);
                 if (sNpcPlayerMons + sNpcEnemyMons > NPC_MAX_MONS)
                     sNpcEnemyMons = NPC_MAX_MONS - sNpcPlayerMons;
+                sNpcSpeechLen[0] = SpeechLen(BattleSetup_GetDefeatSpeech(FALSE));
+                sNpcSpeechLen[1] = SpeechLen(BattleSetup_GetDefeatSpeech(TRUE));
             }
             BuildNpcChunk(sSetupCursor, chunk);
         }
@@ -630,6 +682,7 @@ static EWRAM_DATA u32 sLastHeard = 0;
 static EWRAM_DATA u8 sSetupMask[(SETUP_CHUNKS_MAX + 7) / 8] = {0};
 static EWRAM_DATA u8 sSetupTotal = 0;
 static EWRAM_DATA u8 sWatchEnv = 0;
+static EWRAM_DATA u8 sWatchSpeech[2][SPEECH_BYTES] = {{0}};
 static EWRAM_DATA u8 sSetupGot = 0;
 static EWRAM_DATA bool8 sSetupReady = FALSE;
 static EWRAM_DATA u16 sRecRecv[4] = {0};
@@ -1014,6 +1067,7 @@ static void CB2_SpectateDone(void)
     RecordedBattle_LiveEnd();
     RemoteBattle_SetSpectateMirror(FALSE);
     gRemoteVersus = FALSE;
+    BattleSetup_SetDefeatSpeech(NULL, NULL);
     for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
         gSaveBlock2Ptr->playerName[i] = sSavedName[i];
     gSaveBlock2Ptr->playerGender = sSavedGender;
@@ -1068,6 +1122,19 @@ static void LaunchNpcBattle(const u8 *buf)
     }
     CalculatePlayerPartyCount();
     CalculateEnemyPartyCount();
+    {
+        u16 tail = 24 + (playerMons + enemyMons) * sizeof(struct Pokemon);
+
+        for (i = 0; i < 2; i++)
+        {
+            for (j = 0; j < 6; j++)
+                RemoteBattle_SetSpectateOwnPhrase(i, j, buf[tail + i * 12 + j * 2] | (buf[tail + i * 12 + j * 2 + 1] << 8));
+            for (j = 0; j < SPEECH_BYTES; j++)
+                sWatchSpeech[i][j] = buf[tail + 24 + i * SPEECH_BYTES + j];
+            sWatchSpeech[i][SPEECH_BYTES - 1] = EOS;
+        }
+        BattleSetup_SetDefeatSpeech(sWatchSpeech[0], sWatchSpeech[1]);
+    }
     gRecordedBattleRngSeed = seed;
     gTrainerBattleOpponent_A = buf[12] | (buf[13] << 8);
     gTrainerBattleOpponent_B = buf[14] | (buf[15] << 8);

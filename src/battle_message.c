@@ -2637,6 +2637,8 @@ u32 BattleStringExpandPlaceholders(const u8 *src, u8 *dst)
                 else
                 {
                     toCpy = GetTrainerALoseText();
+                    if (RemoteSpectate_IsWatching())
+                        RemoteBattle_AppendWatchedPhrase(0);
                 }
                 break;
             case B_TXT_TRAINER1_WIN_TEXT: // trainerA win text

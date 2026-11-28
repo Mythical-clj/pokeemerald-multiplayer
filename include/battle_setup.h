@@ -56,6 +56,8 @@ void ShowTrainerCantBattleSpeech(void);
 void PlayTrainerEncounterMusic(void);
 const u8 *GetTrainerALoseText(void);
 const u8 *GetTrainerBLoseText(void);
+const u8 *BattleSetup_GetDefeatSpeech(bool8 second);
+void BattleSetup_SetDefeatSpeech(u8 *first, u8 *second);
 const u8 *GetTrainerWonSpeech(void);
 void UpdateRematchIfDefeated(s32 rematchTableId);
 void IncrementRematchStepCounter(void);

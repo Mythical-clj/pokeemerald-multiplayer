@@ -1610,6 +1610,18 @@ const u8 *GetTrainerALoseText(void)
     return gStringVar4;
 }
 
+// The trainers' defeat speeches, for the watchers of a fight.
+const u8 *BattleSetup_GetDefeatSpeech(bool8 second)
+{
+    return second ? sTrainerBDefeatSpeech : sTrainerADefeatSpeech;
+}
+
+void BattleSetup_SetDefeatSpeech(u8 *first, u8 *second)
+{
+    sTrainerADefeatSpeech = first;
+    sTrainerBDefeatSpeech = second;
+}
+
 const u8 *GetTrainerBLoseText(void)
 {
     StringExpandPlaceholders(gStringVar4, ReturnEmptyStringIfNull(sTrainerBDefeatSpeech));
