@@ -96,6 +96,8 @@ void RemoteBattle_SetSpectateMirror(bool8 mirrored);
 u32 RemoteBattle_GetSeed(void);
 void RemoteBattle_SetSpectatePartner(const u8 *name, u8 gender, u8 look);
 u8 RemoteBattle_GetPartnerGender(void);
+bool8 RemoteBattle_IsCoopFight(void);
+void RemoteBattle_GetCoopSides(const u8 *names[2], u8 genders[2], u8 looks[2]);
 u16 RemoteBattle_GetOppPhraseWord(u8 which, u8 idx);
 void RemoteBattle_SetSpectatePhrase(u8 which, u8 idx, u16 word);
 void RemoteBattle_SetSpectateOwnPhrase(u8 which, u8 idx, u16 word);

@@ -11,6 +11,7 @@
 #include "text.h"
 #include "window.h"
 #include "pokemon.h"
+#include "player_look.h"
 #include "remote_battle.h"
 #include "remote_player.h"
 #include "remote_sio.h"
@@ -1036,6 +1037,26 @@ void RemoteBattle_SetSpectatePartner(const u8 *name, u8 gender, u8 look)
     sPartnerLook = look;
 }
 
+// A fight with a human partner: who stands on which side. The one who
+// asked is battler 0, the one who was asked is battler 2.
+bool8 RemoteBattle_IsCoopFight(void)
+{
+    return gRemoteHumanBattle && gRemoteBattleActive && !gRemoteVersus && sRole != ROLE_NONE;
+}
+
+void RemoteBattle_GetCoopSides(const u8 *names[2], u8 genders[2], u8 looks[2])
+{
+    u8 me = sRole == ROLE_GUEST ? 1 : 0;
+    u8 other = me ^ 1;
+
+    names[me] = gSaveBlock2Ptr->playerName;
+    genders[me] = gSaveBlock2Ptr->playerGender;
+    looks[me] = PlayerLook_Pack();
+    names[other] = sPartnerName;
+    genders[other] = sPartnerGender;
+    looks[other] = sPartnerLook;
+}
+
 u8 RemoteBattle_GetPartnerGender(void)
 {
     return sPartnerGender;
@@ -1256,7 +1277,7 @@ void RemoteBattle_BattleTick(void)
     }
     RemoteSio_Tick();
     RemotePlayer_DrainBattleRx();
-    if (gRemoteVersus)
+    if (RemoteSpectate_Active())
         RemoteSpectate_BroadcastTick();
     if (sBattleFrame % SYNC_PERIOD_FRAMES == 0)
         SendSync();

@@ -1,4 +1,6 @@
 #include "global.h"
+#include "battle_setup.h"
+#include "remote_spectate.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"
 #include "battle_anim.h"
@@ -1193,6 +1195,11 @@ static void RecordedPlayerHandleDrawTrainerPic(void)
         else
             trainerPicId = gLinkPlayers[gRecordedBattleMultiplayerId].gender;
     }
+    else if (RemoteSpectate_IsWatching() && gPartnerTrainerId == TRAINER_STEVEN_PARTNER)
+    {
+        // Watching two players side by side: the one who asked on the left.
+        trainerPicId = gLinkPlayers[gActiveBattler == 0 ? 0 : 1].gender;
+    }
     else
     {
         trainerPicId = gLinkPlayers[0].gender;
@@ -1205,7 +1212,7 @@ static void RecordedPlayerHandleDrawTrainerPic(void)
         else // first mon
             xPos = 32;
 
-        if (gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER)
+        if (gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER && gPartnerTrainerId != TRAINER_STEVEN_PARTNER)
         {
             xPos = 90;
             yPos = (8 - gTrainerFrontPicCoords[trainerPicId].size) * 4 + 80;
@@ -1222,7 +1229,7 @@ static void RecordedPlayerHandleDrawTrainerPic(void)
         yPos = (8 - gTrainerBackPicCoords[trainerPicId].size) * 4 + 80;
     }
 
-    if (gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER)
+    if (gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER && gPartnerTrainerId != TRAINER_STEVEN_PARTNER)
     {
         trainerPicId = PlayerGenderToFrontTrainerPicId(gSaveBlock2Ptr->playerGender);
         DecompressTrainerFrontPic(trainerPicId, gActiveBattler);
@@ -1681,6 +1688,8 @@ static void RecordedPlayerHandleIntroTrainerBallThrow(void)
     paletteNum = AllocSpritePalette(0xD6F9);
     if (gBattleTypeFlags & BATTLE_TYPE_RECORDED_LINK)
         trainerPicId = gLinkPlayers[GetBattlerMultiplayerId(gActiveBattler)].gender;
+    else if (RemoteSpectate_IsWatching() && gPartnerTrainerId == TRAINER_STEVEN_PARTNER)
+        trainerPicId = gLinkPlayers[gActiveBattler == 0 ? 0 : 1].gender;
     else
         trainerPicId = gSaveBlock2Ptr->playerGender;
 

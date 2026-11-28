@@ -1,5 +1,6 @@
 #include "global.h"
 #include "remote_battle.h"
+#include "remote_spectate.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"
 #include "battle_anim.h"
@@ -126,7 +127,11 @@ static void InitSinglePlayerBtlControllers(void)
             gBattlerControllerFuncs[B_BATTLER_1] = SetControllerToOpponent;
             gBattlerPositions[B_BATTLER_1] = B_POSITION_OPPONENT_LEFT;
 
-            gBattlerControllerFuncs[B_BATTLER_2] = SetControllerToPlayerPartner;
+            // A watcher of a fight with a human partner replays both players.
+            if (RemoteSpectate_IsWatching())
+                gBattlerControllerFuncs[B_BATTLER_2] = SetControllerToRecordedPlayer;
+            else
+                gBattlerControllerFuncs[B_BATTLER_2] = SetControllerToPlayerPartner;
             gBattlerPositions[B_BATTLER_2] = B_POSITION_PLAYER_RIGHT;
 
             gBattlerControllerFuncs[B_BATTLER_3] = SetControllerToOpponent;

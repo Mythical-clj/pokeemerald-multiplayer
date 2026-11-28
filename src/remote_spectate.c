@@ -29,6 +29,7 @@
 #include "remote_social.h"
 #include "remote_spectate.h"
 #include "constants/battle.h"
+#include "constants/trainers.h"
 #include "constants/characters.h"
 #include "constants/rgb.h"
 #include "constants/species.h"
@@ -121,7 +122,8 @@ static EWRAM_DATA u16 sPrevAck[REMOTE_MAX_PLAYERS][4] = {{0}};
 #define SETUP_MONS      8
 #define SETUP_PHRASE_BYTES  48      // the opponent's "won" and "lost" phrases, then the fighter's own
 #define SETUP_CHUNKS    (1 + (SETUP_MONS * sizeof(struct Pokemon) + SETUP_PHRASE_BYTES) / 8)   // 107
-#define NPC_HEADER_CHUNKS   3       // seed/flags, battle type + trainers, environment + counts
+#define NPC_HEADER_CHUNKS   5       // seed/flags, battle type + trainers, environment + counts, two player names
+#define NPC_HEADER_BYTES    (NPC_HEADER_CHUNKS * 8)
 #define NPC_MAX_MONS        12      // six a side
 #define SPEECH_BYTES        100     // a trainer's defeat speech, with the end mark
 #define NPC_TAIL_BYTES      (24 + 2 * SPEECH_BYTES)     // the player's own phrases, then two speeches
@@ -134,6 +136,7 @@ static EWRAM_DATA bool8 sNpcFight = FALSE;
 static EWRAM_DATA u8 sNpcPlayerMons = 0;
 static EWRAM_DATA u8 sNpcEnemyMons = 0;
 static EWRAM_DATA u8 sNpcSpeechLen[2] = {0};
+static EWRAM_DATA bool8 sNpcCoop = FALSE;      // a person fights beside the one being watched
 
 bool8 RemoteSpectate_Active(void)
 {
@@ -157,17 +160,23 @@ static u8 CountSavedMons(bool8 enemy)
 // be watched for now; the link has to be up with somebody on it.
 void RemoteSpectate_NpcBattleBegin(void)
 {
+    bool8 coop = RemoteBattle_IsCoopFight() && (gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER);
+
     sNpcFight = FALSE;
-    if (gRemoteVersus || gRemoteHumanBattle)
+    sNpcCoop = FALSE;
+    if (gRemoteVersus || (gRemoteHumanBattle && !coop))
         return;
     if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER)
-     || (gBattleTypeFlags & (BATTLE_TYPE_RECORDED_INVALID | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_INGAME_PARTNER | BATTLE_TYPE_MULTI)))
+     || (gBattleTypeFlags & (BATTLE_TYPE_RECORDED_INVALID | BATTLE_TYPE_FRONTIER)))
+        return;
+    if (!coop && (gBattleTypeFlags & (BATTLE_TYPE_INGAME_PARTNER | BATTLE_TYPE_MULTI)))
         return;
     if (!RemotePlayer_AnyoneKnown())
         return;
     RemoteSpectate_ResetSender();
     sNpcPlayerMons = 0;
     sNpcEnemyMons = 0;
+    sNpcCoop = coop;
     sNpcFight = TRUE;
 }
 
@@ -232,6 +241,17 @@ static void BuildNpcChunk(u8 cursor, u8 *chunk)
         chunk[3] = seed >> 24;
         chunk[4] = 8 | (gSaveBlock2Ptr->playerGender == FEMALE ? 2 : 0);
         chunk[5] = PlayerLook_Pack();
+        if (sNpcCoop)
+        {
+            const u8 *names[2];
+            u8 genders[2];
+            u8 looks[2];
+
+            RemoteBattle_GetCoopSides(names, genders, looks);
+            chunk[4] = 8 | 16 | (genders[0] == FEMALE ? 2 : 0) | (genders[1] == FEMALE ? 4 : 0);
+            chunk[5] = looks[0];
+            chunk[6] = looks[1];
+        }
         chunk[7] = SetupTotal();
     }
     else if (cursor == 1)
@@ -252,6 +272,27 @@ static void BuildNpcChunk(u8 cursor, u8 *chunk)
         chunk[0] = gBattleEnvironment;
         chunk[1] = sNpcPlayerMons;
         chunk[2] = sNpcEnemyMons;
+    }
+    else if (cursor < NPC_HEADER_CHUNKS)
+    {
+        // the names of the two players on our side, one chunk each
+        if (sNpcCoop)
+        {
+            const u8 *names[2];
+            u8 genders[2];
+            u8 looks[2];
+
+            RemoteBattle_GetCoopSides(names, genders, looks);
+            for (j = 0; j < 7 && names[cursor - 3][j] != EOS; j++)
+                chunk[j] = names[cursor - 3][j];
+            chunk[j] = EOS;
+        }
+        else if (cursor == 3)
+        {
+            for (j = 0; j < 7 && gSaveBlock2Ptr->playerName[j] != EOS; j++)
+                chunk[j] = gSaveBlock2Ptr->playerName[j];
+            chunk[j] = EOS;
+        }
     }
     else
     {
@@ -607,7 +648,7 @@ void RemoteSpectate_BroadcastTick(void)
     }
 }
 
-#define MAX_SPECTATORS 4       // everyone else in a 6-player room
+#define MAX_SPECTATORS 5       // everyone else in a 6-player room, less the other fighter
 
 static void HandleJoin(u8 slot, const u8 *data)
 {
@@ -629,7 +670,7 @@ static void HandleJoin(u8 slot, const u8 *data)
             if (i != slot && sWatchedUntil[i] != 0 && now < sWatchedUntil[i])
                 active++;
         }
-        if (active >= MAX_SPECTATORS)
+        if (active >= (RemoteBattle_IsCoopFight() || gRemoteVersus ? MAX_SPECTATORS - 1 : MAX_SPECTATORS))
             return;
     }
     // A watcher that was away for a moment gets everything again.
@@ -1067,6 +1108,7 @@ static void CB2_SpectateDone(void)
     RecordedBattle_LiveEnd();
     RemoteBattle_SetSpectateMirror(FALSE);
     gRemoteVersus = FALSE;
+    gRemoteBattleActive = FALSE;
     BattleSetup_SetDefeatSpeech(NULL, NULL);
     for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
         gSaveBlock2Ptr->playerName[i] = sSavedName[i];
@@ -1103,6 +1145,25 @@ static void LaunchNpcBattle(const u8 *buf)
     sOppLook = 0;
     sWatchEnv = buf[16];
     gRemoteVersus = FALSE;
+    if (buf[4] & 16)
+    {
+        // A fight with a partner: both players are on this side, the one who
+        // asked on the left. Their names come in the header.
+        u8 partner[PLAYER_NAME_LENGTH + 1];
+
+        for (i = 0; i < PLAYER_NAME_LENGTH + 1; i++)
+        {
+            gSaveBlock2Ptr->playerName[i] = i < 8 ? buf[24 + i] : EOS;
+            partner[i] = i < 8 ? buf[32 + i] : EOS;
+        }
+        partner[PLAYER_NAME_LENGTH] = EOS;
+        gSaveBlock2Ptr->playerName[PLAYER_NAME_LENGTH] = EOS;
+        gLinkPlayers[1].gender = (buf[4] & 4) ? FEMALE : MALE;
+        RemoteBattle_SetSpectatePartner(partner, gLinkPlayers[1].gender, buf[6]);
+        gRemoteBattleActive = TRUE;
+        gPartnerTrainerId = TRAINER_STEVEN_PARTNER;
+        sOppLook = 0;
+    }
     SavePlayerParty();
     ZeroPlayerPartyMons();
     ZeroEnemyPartyMons();
@@ -1111,19 +1172,19 @@ static void LaunchNpcBattle(const u8 *buf)
         u8 *mine = (u8 *)&gPlayerParty[i];
 
         for (j = 0; j < sizeof(struct Pokemon); j++)
-            mine[j] = buf[24 + i * sizeof(struct Pokemon) + j];
+            mine[j] = buf[NPC_HEADER_BYTES + i * sizeof(struct Pokemon) + j];
     }
     for (i = 0; i < enemyMons; i++)
     {
         u8 *theirs = (u8 *)&gEnemyParty[i];
 
         for (j = 0; j < sizeof(struct Pokemon); j++)
-            theirs[j] = buf[24 + (playerMons + i) * sizeof(struct Pokemon) + j];
+            theirs[j] = buf[NPC_HEADER_BYTES + (playerMons + i) * sizeof(struct Pokemon) + j];
     }
     CalculatePlayerPartyCount();
     CalculateEnemyPartyCount();
     {
-        u16 tail = 24 + (playerMons + enemyMons) * sizeof(struct Pokemon);
+        u16 tail = NPC_HEADER_BYTES + (playerMons + enemyMons) * sizeof(struct Pokemon);
 
         for (i = 0; i < 2; i++)
         {
